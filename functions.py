@@ -6,7 +6,7 @@ import re
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
-from scipy.interpolate import griddata
+from scipy.interpolate import griddata, LinearNDInterpolator
 
 def extract_data(file_path, prm):
     """
@@ -72,5 +72,69 @@ def interpolate_data(x, y, z, prm):
 
     # Interpolate the values
     zi = griddata((x, y), z, (xi, yi), method='cubic')
+    #interp = LinearNDInterpolator(list(zip(x, y)), z)
+    #zi = interp(xi, yi)
 
     return xi, yi, zi
+
+def extract_thickness(data_points):
+    thickness = np.zeros(len(data_points))
+    pos_x = np.zeros(len(data_points))
+    pos_y = np.zeros(len(data_points))
+    for i in range(len(data_points)):
+        ##TODO si graphique voulu
+        #plt.plot(data_points[i]["time"], data_points[i]["pos_z"], "-")
+        ##
+        thickness[i] = -np.max(data_points[i]["pos_z"])
+        pos_x[i] = np.mean(data_points[i]["pos_x"])
+        pos_y[i] = np.mean(data_points[i]["pos_y"])
+
+    return pos_x, pos_y, thickness
+
+def extract_map(file_path, prm):
+    """
+    Function to extract experimental data in the text file given as en input.
+    Multiple data point are stored in one file, each between <DATA> and <END DATA>.
+
+    :param file_path: chemin du fichier à traiter
+    :param prm: parameters ........ <TO BE COMPLETED>
+    :return: liste de données pour chaque point de mesure
+    """
+    with open(file_path, 'r') as file:
+        file_content = file.read()
+
+        # Use regex to find matches between prm.begin_data and prm.end_data
+        start = "MAPPING	MAPPING	MAPPING	MAPPING	MAPPING	MAPPING	MAPPING"
+        end = "Reference1"
+        data_matches = re.finditer(repr(start + '(.*?)' + end)[1:-1], file_content, re.DOTALL)
+        # repr()[1:-1] converts to raw string after string concatenation
+
+        for match in data_matches:
+            data_block = match.group(1).strip()
+
+            # Split the data block into lines and extract column names and values
+            lines = data_block.split('\n')
+            column_names = lines[0].split('\t')
+
+            data_values = [line.split('\t') for line in lines[1:]]
+
+            # Create a dictionary for each data set
+            data_set = {column: [] for column in column_names}
+
+            # Populate the dictionary with values
+            for values in data_values:
+                if len(values) < len(data_set):
+                    # Exclude line containing end ("Reference1")
+                    pass
+                else:
+                    for i, column in enumerate(column_names):
+                        if values[i] == "":
+                            values[i] = 0
+                        data_set[column].append(float(values[i]))
+
+            # Convert to array
+            for k in data_set:
+                data_set[k] = np.array(data_set[k])
+
+    return data_set
+
