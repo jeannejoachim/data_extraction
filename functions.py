@@ -15,9 +15,16 @@ def extract_data(file_path, prm):
 
     :param file_path: chemin du fichier à traiter
     :param prm: parameters ........ <TO BE COMPLETED>
-    :return: liste de données pour chaque point de mesure
+    :return: time, pos_x, pos_y, pos_z, Fz: arrays of time, positions and Fz for each point
     """
-    data_list = []  # List to store data sets as dictionaries
+    data_points_list = []  # List to store data sets as dictionaries
+
+    # Dictionary that defines initial data names (key) vs. cleaned-up data name (value)
+    data_cleanup = {"Time, s": "time",
+                    "Position (z), mm": "pos_z",
+                    "Position (x), mm": "pos_x",
+                    "Position (y), mm": "pos_y",
+                    "Fz, gf": "Fz"}
 
     with open(file_path, 'r') as file:
         file_content = file.read()
@@ -35,8 +42,8 @@ def extract_data(file_path, prm):
 
             # Clean up column names
             for c in range(len(column_names)):
-                if column_names[c] in prm.data_cleanup:
-                    column_names[c] = prm.data_cleanup[column_names[c]]
+                if column_names[c] in data_cleanup:
+                    column_names[c] = data_cleanup[column_names[c]]
 
             data_values = [line.split('\t') for line in lines[1:]]
 
@@ -53,9 +60,23 @@ def extract_data(file_path, prm):
                 data_set[k] = np.array(data_set[k])
 
             # Add the data set to the list
-            data_list.append(data_set)
+            data_points_list.append(data_set)
 
-    return data_list
+    return data_points_list
+
+def extract_thickness(data_points_list):
+    thickness = np.zeros(len(data_points_list))
+    pos_x = np.zeros(len(data_points_list))
+    pos_y = np.zeros(len(data_points_list))
+    for i in range(len(data_points_list)):
+        ##TODO si graphique voulu
+        #plt.plot(data_points[i]["time"], data_points[i]["pos_z"], "-")
+        ##
+        thickness[i] = -np.max(data_points_list[i]["pos_z"])
+        pos_x[i] = np.mean(data_points_list[i]["pos_x"])
+        pos_y[i] = np.mean(data_points_list[i]["pos_y"])
+
+    return pos_x, pos_y, thickness
 
 def interpolate_data(x, y, z, prm):
     """
@@ -76,20 +97,6 @@ def interpolate_data(x, y, z, prm):
     #zi = interp(xi, yi)
 
     return xi, yi, zi
-
-def extract_thickness(data_points):
-    thickness = np.zeros(len(data_points))
-    pos_x = np.zeros(len(data_points))
-    pos_y = np.zeros(len(data_points))
-    for i in range(len(data_points)):
-        ##TODO si graphique voulu
-        #plt.plot(data_points[i]["time"], data_points[i]["pos_z"], "-")
-        ##
-        thickness[i] = -np.max(data_points[i]["pos_z"])
-        pos_x[i] = np.mean(data_points[i]["pos_x"])
-        pos_y[i] = np.mean(data_points[i]["pos_y"])
-
-    return pos_x, pos_y, thickness
 
 def extract_map(file_path, prm):
     """
@@ -138,3 +145,13 @@ def extract_map(file_path, prm):
 
     return data_set
 
+def calculate_Fz(z, E, Fini):#, R, nu):
+    """
+    :param E: Young modulus, to be determined by data fit
+    :param R: indenter radius (given)
+    :param nu: Poisson coefficient (given)
+    :return: Fz (force) fit equation
+    """
+    R = 1
+    nu = 0.5
+    return (4/3)*(np.sqrt(R)/(1-nu**2))*E*(np.abs(z)**(3/2)) + Fini

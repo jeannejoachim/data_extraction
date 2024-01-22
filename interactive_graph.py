@@ -18,4 +18,4 @@ plt.figure().add_subplot(111, projection='3d'),
 figx = pickle.load(open(os.path.join(graph_folder, fig_name), 'rb'))
 
 plt.show()
-input()
+#input()
