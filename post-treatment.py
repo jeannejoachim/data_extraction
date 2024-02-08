@@ -19,29 +19,33 @@ except:
 
 class parameters_general():
     # Data folder path, the 'r' prefix is important to convert the path in raw string!
-    data_folder = r"C:\Users\Jeanne\Documents\Documents_communs\Laura_donnees\Donnees\BMC-006_19-10-23"
+    data_folder = r"C:\Users\Jeanne\Documents\Documents_communs\Laura_donnees\Fichiers pour générer .map manquants\Exemple"
     filename_separator = "_"       # string that separates sample ID to test name in the filename
     filename_ID_position = 1
     # 1 = sample ID is the first element given (so appears before the first file_name_separator)
     show_plots = True
-    sample_ID = ["C4_test1"] #C2-JAB9730", "E1-JAB9735", "B2-JAB9727", "I3-JAB9749"]
+    sample_ID = ["Z2-JAB9793"] #C2-JAB9730", "E1-JAB9735", "B2-JAB9727", "I3-JAB9749"]
     treat_all_files_in_data_folder = False
     # if False, treatment is performed on given "sample_ID" list
     # if True, "sample_ID" is not used and sample ID is retrieved from all files in data_folder
 
 class parameters_thickness():
+    plot_2D = True          # Plot and save in .png
+    plot_on_picture = True
+    plot_contour = True  # Plot and save in .png
+    cropping_frame = 100  # Picture cropping (in pixels) around measurement points limits. 0 = no cropping
+    plot_3D = True          # Plot and save in .png and .pickle for interactivity
+    alpha = 0.5  # 0 = transparent, 1 = opaque (used for if plot_thickness_on_image = True)
     file_keyword = "thickness"   # Keyword in filename for this test
     file_format = ".txt"        # File format for this test
     nb_interp = 100     # Number of points for the data interpolation used to draw color maps
     begin_data = "<DATA>"      # String after which the data point begins
     end_data = "<END DATA>"    # String before which the data point ends
-    plot_2D = False          # Plot and save in .png
-    plot_on_picture = False
-    plot_3D = False          # Plot and save in .png and .pickle for interactivity
-    alpha = 0.5  # 0 = transparent, 1 = opaque (used for if plot_thickness_on_image = True)
+    begin_map = "MAPPING"  # String contained in the line before column name line (entire line will be removed)
+    end_map = "Reference1"  # String contained in the line after points data (entire line will be removed)
 
 class parameters_indentation():
-    fit_start_Fz_value = 0.1            # Start value for the Fz fit = Fz value after the first pike
+    fit_start_Fz_value = 0            # Start value for the Fz fit = Fz value after the first pike
     fit_stop_thickness_percent = 10     # Stop value for the Fz fit = thickness percentage (at the same point)
     file_keyword = "indentation"   # Keyword in filename for this test
     file_format = ".txt"        # File format for this test
@@ -59,9 +63,7 @@ prm_indentation = parameters_indentation()
 
 #TODO récupérer tous les indices des échantillons dans le dossier => généraliser pour plusieurs essais
 # if prm.treat_all_files_in_data_folder:
-#     #TODO écraser sample_ID, utiliser ID_position
-#     # Extraction of (skin) thickness
-#     #f_thickness = [f for f in os.listdir(prm.data_folder) if (prm_thickness.file_keyword and prm_thickness.file_format) in f]
+#     #TODO écraser sample_ID, utiliser ID_position#
 # else:
 #     sample_ID = prm.sample_ID
 sample_ID = prm.sample_ID
@@ -71,6 +73,8 @@ for s in sample_ID:
     ####################################################
     # THICKNESS
     ####################################################
+    # f_thickness = [f for f in os.listdir(prm.data_folder) if (prm_thickness.file_keyword and prm_thickness.file_format) in f]
+    # TODO généraliser avec plusieurs fichiers pour 1 sample
     file = s + prm.filename_separator + prm_thickness.file_keyword + prm_thickness.file_format
     # TODO Vérifier avec nom fichiers réels
 
@@ -103,12 +107,19 @@ for s in sample_ID:
         print("... thickness plot on picture saved...")
         if not prm.show_plots:
             plt.close(fig)
+    if prm_thickness.plot_contour:
+        fig = plot_thickness_on_picture(s, result_thickness['thickness'], prm, prm_thickness, contour_plot=True)
+        fig.savefig(os.path.join(prm.data_folder, s + "_thickness_on_image_contour.png"), bbox_inches='tight')
+        print("... thickness contour plot on picture saved...")
+        if not prm.show_plots:
+            plt.close(fig)
 
     ####################################################
     # INDENTATION
     ####################################################
     # Pour un fichier, tous points de mesure
-    f_indentation = [f for f in os.listdir(prm.data_folder) if (prm_indentation.file_keyword and prm_indentation.file_format) in f]
+    # f_indentation = [f for f in os.listdir(prm.data_folder) if (prm_indentation.file_keyword and prm_indentation.file_format) in f]
+    # TODO généraliser avec plusieurs fichiers pour 1 sample
     file = s + prm.filename_separator + prm_indentation.file_keyword + prm_indentation.file_format
 
     # Extract all data point
@@ -123,6 +134,10 @@ for s in sample_ID:
             if not prm.show_plots:
                 plt.close(fig)
         print("... fz curve fit saved...")
+
+    ####################################################
+    # Excel output
+    ####################################################
 
     print("... sample finished!")
 

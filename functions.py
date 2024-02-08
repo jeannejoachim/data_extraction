@@ -111,28 +111,28 @@ def interpolate_data(x, y, z, prm_thickness):
     return xi, yi, zi
 
 
-def extract_map(file_path):
+def extract_map(file_path, begin_map, end_map):
     """
     Function to extract map data from the text file given in input.
     Multiple data point are stored in one file, each between <DATA> and <END DATA>.
 
     :param file_path: path of the map file
+    :param begin_map: string contained in the line before column name line (entire line will be removed)
+    :param end_map: string contained in the line after points data (entire line will be removed)
     :return: map_points: array containing map values for each point
     """
     with open(file_path, 'r') as file:
         file_content = file.read()
 
-        # Use regex to find matches between prm.begin_data and prm.end_data
-        start = "MAPPING	MAPPING	MAPPING	MAPPING	MAPPING	MAPPING	MAPPING"
-        end = "Reference1"
-        data_matches = re.finditer(repr(start + '(.*?)' + end)[1:-1], file_content, re.DOTALL)
+        # Use regex to find matches between prm.start and prm.end
+        data_matches = re.finditer(repr(begin_map + '(.*?)' + end_map)[1:-1], file_content, re.DOTALL)
         # repr()[1:-1] converts to raw string after string concatenation
 
         for match in data_matches:
             data_block = match.group(1).strip()
 
             # Split the data block into lines and extract column names and values
-            lines = data_block.split('\n')
+            lines = data_block.split('\n')[1:-1]  # remove first and last lines (= containing start and end strings)
             column_names = lines[0].split('\t')
 
             data_values = [line.split('\t') for line in lines[1:]]
@@ -142,14 +142,10 @@ def extract_map(file_path):
 
             # Populate the dictionary with values
             for values in data_values:
-                if len(values) < len(map_points):
-                    # Exclude line containing end ("Reference1")
-                    pass
-                else:
-                    for i, column in enumerate(column_names):
-                        if values[i] == "":
-                            values[i] = 0
-                        map_points[column].append(float(values[i]))
+                for i, column in enumerate(column_names):
+                    if values[i] == "":
+                        values[i] = 0
+                    map_points[column].append(float(values[i]))
 
             # Convert to array
             for k in map_points:
@@ -209,6 +205,14 @@ def extract_young_modulus(data_points_list, thickness, prm_indentation):
 
         # Fit range starting after the first pike + Fz above given value
         ind_Fz_positive = np.max(np.where(Fz_fit < 0)) + 1
+        if ind_Fz_positive == len(Fz_fit):
+            result_indentation['E_fit'][i] = np.nan
+            result_indentation['Fz_ini'][i] = np.nan
+            result_indentation['corr_coeff'][i] = np.nan
+            result_indentation['pos_z_fit'].append(pos_z_fit)
+            result_indentation['Fz_fit'].append(Fz_fit)
+            result_indentation['res_fit'].append(np.nan)
+            continue
         ind_Fz_min = np.min(np.where(Fz_fit[ind_Fz_positive:] > prm_indentation.fit_start_Fz_value))
         Fz_fit = Fz_fit[ind_Fz_positive:][ind_Fz_min:]
         pos_z_fit = pos_z_fit[ind_Fz_positive:][ind_Fz_min:]
@@ -288,7 +292,7 @@ def plot_thickness_3d(s, result_thickness):
     return fig
 
 
-def plot_thickness_on_picture(s, thickness, prm, prm_thickness):
+def plot_thickness_on_picture(s, thickness, prm, prm_thickness, contour_plot=False):
     """
     Function to plot thickness interpolation 2D surface on the photo taken during experiments.
 
@@ -296,14 +300,16 @@ def plot_thickness_on_picture(s, thickness, prm, prm_thickness):
     :param thickness: thickness extracted from data
     :param prm: general parameters
     :param prm_thickness: thickness extraction parameters
+    :param contour_plot: (optional) boolean that is True for contour plot, False for regular surface plot
     :return: fig object, thickness graph on pixel picture
     """
     # Load image
     ## TODO trouver le fichier image = extension jpg ou bmp ou png
-    img = np.asarray(Image.open(os.path.join(prm.data_folder, s + ".bmp")))
+    img = np.asarray(Image.open(os.path.join(prm.data_folder, s + "_map.jpg")))
 
-    # Extract pixel map
-    map_points = extract_map(os.path.join(prm.data_folder, s + "_map.map"))
+    # Extract map
+    map_points = extract_map(os.path.join(prm.data_folder, s + "_map.map"),
+                             prm_thickness.begin_map, prm_thickness.end_map)
 
     # Sort map by point ID (security check)
     vect_px = np.array((map_points['PixelX'], map_points['PixelY'], map_points['PointID']))
@@ -317,11 +323,26 @@ def plot_thickness_on_picture(s, thickness, prm, prm_thickness):
     fig = plt.figure()
     ax = fig.add_subplot(111)
     plt.imshow(img)
-    pcm = ax.pcolormesh(xpx, ypx, zpx, shading='nearest', cmap="jet", alpha=prm_thickness.alpha,
-                        vmin=thickness.min(), vmax=thickness.max())
-    fig.colorbar(pcm, label='thickness')
-    plt.scatter(vect_px_sorted_by_point_id[0, :], vect_px_sorted_by_point_id[1, :], c=thickness, s=2., cmap="jet",
-                vmin=thickness.min(), vmax=thickness.max())
+    if not contour_plot:
+        pcm = ax.pcolormesh(xpx, ypx, zpx, shading='nearest', cmap="jet", alpha=prm_thickness.alpha, vmin=thickness.min(),
+                      vmax=thickness.max())
+        fig.colorbar(pcm, label='thickness')
+        # Scatter plot of measurement points
+        plt.scatter(vect_px_sorted_by_point_id[0, :], vect_px_sorted_by_point_id[1, :], c=thickness, s=2., cmap="jet",
+                    vmin=thickness.min(), vmax=thickness.max())
+    else:
+        # Surface plot with more transparence
+        ax.pcolormesh(xpx, ypx, zpx, shading='nearest', cmap="jet", alpha=prm_thickness.alpha/2, vmin=thickness.min(),
+                      vmax=thickness.max())
+        # Contour plot with inline labels
+        CS = ax.contour(xpx, ypx, zpx, cmap="jet", vmin=thickness.min(), vmax=thickness.max())
+        ax.clabel(CS, inline=True, inline_spacing=-2, fontsize=8)
+
+    if prm_thickness.cropping_frame != 0:
+        # Perform cropping if wanted
+        plt.xlim(np.min(xpx)-prm_thickness.cropping_frame, np.max(xpx)+prm_thickness.cropping_frame)
+        plt.ylim(np.min(ypx)-prm_thickness.cropping_frame, np.max(ypx)+prm_thickness.cropping_frame)
+
     plt.title(s)
     plt.axis('off')
 
