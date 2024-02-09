@@ -28,6 +28,7 @@ class parameters_general():
     treat_all_files_in_data_folder = False
     # if False, treatment is performed on given "sample_ID" list
     # if True, "sample_ID" is not used and sample ID is retrieved from all files in data_folder
+    picture_keyword = "map"     # Keyword in filename for test real picture
 
 class parameters_thickness():
     plot_2D = True          # Plot and save in .png
@@ -82,10 +83,11 @@ for s in sample_ID:
     # Pour un fichier, tous points de mesure
 
     # Extract all data point
-    data_points_list = extract_data(os.path.join(prm.data_folder, file), prm_thickness)
+    data_points_list = extract_data(os.path.join(prm.data_folder, file),
+                                    prm_thickness.begin_data, prm_thickness.end_data)
     result_thickness = extract_thickness(data_points_list)
     result_thickness['x_interp'], result_thickness['y_interp'], result_thickness['thickness_interp'] = interpolate_data(
-        result_thickness['pos_x'], result_thickness['pos_y'], result_thickness['thickness'], prm_thickness)
+        result_thickness['pos_x'], result_thickness['pos_y'], result_thickness['thickness'], prm_thickness.nb_interp)
 
     # Plot graphs
     if prm_thickness.plot_2D:
@@ -123,7 +125,8 @@ for s in sample_ID:
     file = s + prm.filename_separator + prm_indentation.file_keyword + prm_indentation.file_format
 
     # Extract all data point
-    data_points_list = extract_data(os.path.join(prm.data_folder, file), prm_indentation)
+    data_points_list = extract_data(os.path.join(prm.data_folder, file),
+                                    prm_indentation.begin_data, prm_indentation.end_data)
     result_indentation = extract_young_modulus(data_points_list, result_thickness['thickness'], prm_indentation)
 
     # Graphs

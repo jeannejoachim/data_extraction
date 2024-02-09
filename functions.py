@@ -12,13 +12,14 @@ from functools import partial
 from sklearn.metrics import r2_score
 
 
-def extract_data(file_path, prm):
+def extract_data(file_path, begin_data, end_data):
     """
     Function to extract experimental data in the text file given as en input.
     Multiple data point are stored in one file, each between <DATA> and <END DATA>.
 
     :param file_path: chemin du fichier à traiter
-    :param prm: general parameters object
+    :param begin_data: string after which data begin
+    :param end_data: string before which data end
     :return: data_points_list: list of time, positions and Fz for each point
     """
     data_points_list = []  # List to store data sets as dictionaries
@@ -33,8 +34,8 @@ def extract_data(file_path, prm):
     with open(file_path, 'r') as file:
         file_content = file.read()
 
-        # Use regex to find matches between prm.begin_data and prm.end_data
-        data_matches = re.finditer(repr(prm.begin_data + '(.*?)' + prm.end_data)[1:-1], file_content, re.DOTALL)
+        # Use regex to find matches between begin_data and end_data
+        data_matches = re.finditer(repr(begin_data + '(.*?)' + end_data)[1:-1], file_content, re.DOTALL)
         # repr()[1:-1] converts to raw string after string concatenation
 
         for match in data_matches:
@@ -90,20 +91,19 @@ def extract_thickness(data_points_list):
     return result_thickness
 
 
-def interpolate_data(x, y, z, prm_thickness):
+def interpolate_data(x, y, z, nb_interp):
     """
     Function to interpolate data for the thickness visualization.
 
     :param x: x position from data
     :param y: y position from data
     :param z: z position from data
-    :param prm_thickness: thickness parameter object, containing namely:
-        * nb_interp: number of interpolation points
+    :param nb_interp: number of interpolation points
     :return: xi, yi, zi: interpolated data
     """
     # Create a regular grid
-    xi, yi = np.meshgrid(np.linspace(min(x), max(x), prm_thickness.nb_interp),
-                         np.linspace(min(y), max(y), prm_thickness.nb_interp))
+    xi, yi = np.meshgrid(np.linspace(min(x), max(x), nb_interp),
+                         np.linspace(min(y), max(y), nb_interp))
 
     # Interpolate the values
     zi = griddata((x, y), z, (xi, yi), method='cubic')
@@ -153,6 +153,70 @@ def extract_map(file_path, begin_map, end_map):
 
     return map_points
 
+def generate_map(data_points_list, ratio, Rot_mat, offset):
+    """
+    Function to generate missing map file, used to translate sensor coordinates to pixel (picture) coordinates.
+
+    :param data_points_list: data as extracted by extract_data
+    :param ratio: expansion ratio between sensor and pixel coordinates
+    :param Rot_mat: rotation matrix between sensor and pixel coordinates
+    :param offset: translation value between sensor and pixel coordinates
+    :return: map_points: dictionary of x and y values in both sensor and pixel coordinates
+    """
+
+    # Create map points dictionary results
+    map_points = {'PixelX': np.zeros((len(data_points_list))),
+                  'PixelY': np.zeros((len(data_points_list))),
+                  'PointID': np.zeros((len(data_points_list))),
+                  'ScanX(mm)': np.zeros((len(data_points_list))),
+                  'ScanY(mm)': np.zeros((len(data_points_list)))}
+
+    # Extract position in sensor coordinates
+    for i in range(len(data_points_list)):
+        # Define PointID
+        map_points['PointID'][i] = i + 1
+
+        # Extract x-position
+        if np.all(data_points_list[i]['pos_x']):
+            map_points['ScanX(mm)'][i] = data_points_list[i]['pos_x'][0]
+        else:
+            # If `pos_x` recorded for the test is not the same for all times
+            warnings.warn("WARNING x position change for point: " + str(i) + "in data:" + reference_data_file + "\n" +
+                          " Taking average value rounded at 1e-6.")
+            map_points['ScanX(mm)'][i] = np.round(np.average(data_points_list[i]['pos_x']), 6)
+
+        # Extract y-position
+        if np.all(data_points_list[i]['pos_y']):
+            map_points['ScanY(mm)'][i] = data_points_list[i]['pos_y'][0]
+        else:
+            # If `pos_x` recorded for the test is not the same for all times
+            warnings.warn("WARNING y position change for point: " + str(i) + "in data:" + reference_data_file + "\n" +
+                          " Taking average value rounded at 1e-6.")
+            map_points['ScanY(mm)'][i] = np.round(np.average(data_points_list[i]['pos_y']), 6)
+
+    # X-flip scan reference data
+    x_coordinate_adapted = -map_points['ScanX(mm)']
+
+    # Apply ratio
+    x_coordinate_adapted = x_coordinate_adapted * ratio
+    y_coordinate_adapted = map_points['ScanY(mm)'] * ratio
+
+    # Rotate data points
+    map_points['PixelX'] = np.zeros((len(map_points['ScanX(mm)'])))
+    map_points['PixelY'] = np.zeros((len(map_points['ScanY(mm)'])))
+    for i in range(len(map_points['ScanX(mm)'])):
+        map_points['PixelX'][i], map_points['PixelY'][i] = np.round(
+            np.matmul(Rot_mat, np.array([x_coordinate_adapted[i], y_coordinate_adapted[i]])), 0)
+
+    # Translate data points
+    map_points['PixelX'] += offset[0]
+    map_points['PixelY'] += offset[1]
+
+    # Round to integer
+    map_points['PixelX'] = np.round(map_points['PixelX'], 0)
+    map_points['PixelY'] = np.round(map_points['PixelY'], 0)
+
+    return map_points
 
 def calculate_fz(z, E, Fini, R, nu):
     """
@@ -304,8 +368,11 @@ def plot_thickness_on_picture(s, thickness, prm, prm_thickness, contour_plot=Fal
     :return: fig object, thickness graph on pixel picture
     """
     # Load image
-    ## TODO trouver le fichier image = extension jpg ou bmp ou png
-    img = np.asarray(Image.open(os.path.join(prm.data_folder, s + "_map.jpg")))
+    # Find picture file: contains sample name and picture keyword, and ends with appropriate extension
+    image_file = [f for f in os.listdir(prm.data_folder) if s in f and prm.picture_keyword in f and
+                  f.endswith((".jpg", ".jpeg", ".bmp", ".png"))]
+
+    img = np.asarray(Image.open(os.path.join(prm.data_folder, image_file)))
 
     # Extract map
     map_points = extract_map(os.path.join(prm.data_folder, s + "_map.map"),
@@ -317,7 +384,7 @@ def plot_thickness_on_picture(s, thickness, prm, prm_thickness, contour_plot=Fal
 
     # Interpolate data on pixel map
     xpx, ypx, zpx = interpolate_data(vect_px_sorted_by_point_id[0, :], vect_px_sorted_by_point_id[1, :], thickness,
-                                     prm_thickness)
+                                     prm_thickness.nb_interp)
 
     # 2D graph with pixel image coordinates
     fig = plt.figure()
