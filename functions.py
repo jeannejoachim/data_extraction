@@ -24,7 +24,7 @@ def extract_data(file_path, begin_data, end_data):
     """
     data_points_list = []  # List to store data sets as dictionaries
 
-    # Dictionary that defines initial data names (key) vs. cleaned-up data name (value)
+    # Dictionary that defines initial data names (key) vs. cleaned-up data name (value) for future use in the code
     data_cleanup = {"Time, s": "time",
                     "Position (z), mm": "pos_z",
                     "Position (x), mm": "pos_x",
@@ -153,6 +153,7 @@ def extract_map(file_path, begin_map, end_map):
 
     return map_points
 
+
 def generate_map(data_points_list, ratio, Rot_mat, offset):
     """
     Function to generate missing map file, used to translate sensor coordinates to pixel (picture) coordinates.
@@ -165,9 +166,9 @@ def generate_map(data_points_list, ratio, Rot_mat, offset):
     """
 
     # Create map points dictionary results
-    map_points = {'PixelX': np.zeros((len(data_points_list))),
-                  'PixelY': np.zeros((len(data_points_list))),
-                  'PointID': np.zeros((len(data_points_list))),
+    map_points = {'PixelX': np.zeros((len(data_points_list)), dtype=int),
+                  'PixelY': np.zeros((len(data_points_list)), dtype=int),
+                  'PointID': np.zeros((len(data_points_list)), dtype=int),
                   'ScanX(mm)': np.zeros((len(data_points_list))),
                   'ScanY(mm)': np.zeros((len(data_points_list)))}
 
@@ -202,21 +203,16 @@ def generate_map(data_points_list, ratio, Rot_mat, offset):
     y_coordinate_adapted = map_points['ScanY(mm)'] * ratio
 
     # Rotate data points
-    map_points['PixelX'] = np.zeros((len(map_points['ScanX(mm)'])))
-    map_points['PixelY'] = np.zeros((len(map_points['ScanY(mm)'])))
     for i in range(len(map_points['ScanX(mm)'])):
         map_points['PixelX'][i], map_points['PixelY'][i] = np.round(
             np.matmul(Rot_mat, np.array([x_coordinate_adapted[i], y_coordinate_adapted[i]])), 0)
 
     # Translate data points
-    map_points['PixelX'] += offset[0]
-    map_points['PixelY'] += offset[1]
-
-    # Round to integer
-    map_points['PixelX'] = np.round(map_points['PixelX'], 0)
-    map_points['PixelY'] = np.round(map_points['PixelY'], 0)
+    map_points['PixelX'] += int(offset[0])
+    map_points['PixelY'] += int(offset[1])
 
     return map_points
+
 
 def calculate_fz(z, E, Fini, R, nu):
     """
@@ -371,6 +367,10 @@ def plot_thickness_on_picture(s, thickness, prm, prm_thickness, contour_plot=Fal
     # Find picture file: contains sample name and picture keyword, and ends with appropriate extension
     image_file = [f for f in os.listdir(prm.data_folder) if s in f and prm.picture_keyword in f and
                   f.endswith((".jpg", ".jpeg", ".bmp", ".png"))]
+    if len(image_file) > 1:
+        warnings.warn("WARNING There is more than one image file with the same ID (" + s + ")\n" +
+                      "Taking image: " + image_file[0])
+    image_file = image_file[0]
 
     img = np.asarray(Image.open(os.path.join(prm.data_folder, image_file)))
 
