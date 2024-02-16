@@ -11,7 +11,6 @@ import re
 import numpy as np
 import matplotlib.pyplot as plt
 import pickle
-import warnings
 from datetime import datetime
 
 try:
@@ -50,12 +49,22 @@ end_data = "<END DATA>"     # String before which the data point ends in test fi
 map_file_extension = r".map"
 begin_map = "MAPPING"
 
-print("================================\n" + "Welcome to map-generator.py\n" + "================================")
+
+class logfile():
+    verbose = True  # boolean parameter, when True messages appear in terminal
+    log_file_path = os.path.join(data_folder, "0_map-generator-log_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S") +
+                                 ".log")
+
+
+prm = logfile()
+
+log_text(prm.log_file_path, prm.verbose,
+         "================================\n" + "Welcome to map-generator.py\n" + "================================")
 
 #######################################################
 # Find transformation parameters
 #######################################################
-print("Computing transformation parameters...")
+log_text(prm.log_file_path, prm.verbose, "Computing transformation parameters...")
 # X-flip scan reference data
 Scan_ref_initial_values = np.copy(Scan_ref)
 Scan_ref[:, 0] = -Scan_ref[:, 0]
@@ -82,14 +91,14 @@ Scan_ref[1, :] += offset
 #######################################################
 # Verify on reference map
 #######################################################
-print("Verifying on reference map...")
+log_text(prm.log_file_path, prm.verbose, "Verifying on reference map...")
 # Extract map from reference - for verification
 reference_map_file = [f for f in os.listdir(os.path.join(data_folder, reference_map_subfolder))
                       if f.endswith(map_file_extension)]
 
 if len(reference_map_file) > 1:
-    warnings.warn("WARNING There is more than one map file in the reference folder. \n" +
-                  "Taking data from: " + reference_map_file[0])
+    log_text(prm.log_file_path, prm.verbose, "WARNING There is more than one map file in the reference folder. \n" +
+             "Taking data from: " + reference_map_file[0])
 reference_map_file = reference_map_file[0]
 map_points_true_value = extract_map(os.path.join(data_folder, reference_map_subfolder, reference_map_file),
                                     begin_map, reference_point_keyword)
@@ -98,46 +107,50 @@ map_points_true_value = extract_map(os.path.join(data_folder, reference_map_subf
 data_file = [f for f in os.listdir(os.path.join(data_folder, reference_map_subfolder)) if data_file_extension in f
              if data_file_keyword in f]
 if len(data_file) > 1:
-    warnings.warn("WARNING There is more than one data file in the reference folder. \n" +
-                  "Taking data from: " + data_file[0])
+    log_text(prm.log_file_path, prm.verbose, "WARNING There is more than one data file in the reference folder. \n" +
+             "Taking data from: " + data_file[0])
 data_file = data_file[0]
-data_points_list = extract_data(os.path.join(data_folder, reference_map_subfolder, data_file), begin_data, end_data)
+data_points_list = extract_data_from_file(os.path.join(data_folder, reference_map_subfolder, data_file), begin_data,
+                                          end_data)
 
 # Generate map dictionary
-map_points = generate_map(data_points_list, ratio, Rot_mat, offset)
+map_points = generate_map(data_points_list, ratio, Rot_mat, offset,
+                          os.path.join(data_folder, reference_map_subfolder, data_file), prm)
 
 # Test comparison
 test_x = np.array_equal(map_points_true_value['PixelX'], map_points['PixelX'])
 test_y = np.array_equal(map_points_true_value['PixelY'], map_points['PixelY'])
 
 if test_x and test_y:
-    print("\t test passed!")
+    log_text(prm.log_file_path, prm.verbose, "\t test passed!")
 else:
     raise ValueError("TEST FAILED! Try using: angle_multiplier = " + str(-1*angle_multiplier))
 
 #######################################################
 # Generate missing map files
 #######################################################
-print("Generating missing maps...")
+log_text(prm.log_file_path, prm.verbose, "Generating missing maps...")
 data_files = [f for f in os.listdir(data_folder) if data_file_extension in f if data_file_keyword in f]
 
 # Loop on data test files
 for df in data_files:
     sample_ID = df.split(filename_separator)[filename_ID_position]
-    print("[" + str(data_files.index(df) + 1) + "/" + str(len(data_files)) + "] " + "Treating sample " + sample_ID)
+    log_text(prm.log_file_path, prm.verbose, "[" + str(data_files.index(df) + 1) + "/" + str(len(data_files)) + "] " +
+             "Treating sample " + sample_ID)
 
     # If map file already exists: pass this iteration (avoid overwriting initial map)
     map_file = [f for f in os.listdir(data_folder) if map_file_extension in f if sample_ID in f]
     if len(map_file) > 0:
-        warnings.warn("WARNING Map file for this sample already exists " + str(map_file) + "!\n" +
-                      "Skipping sample: " + sample_ID)
+        log_text(prm.log_file_path, prm.verbose, "WARNING Map file for this sample already exists " + str(map_file) + "!\n" +
+                 "Skipping sample: " + sample_ID)
         continue
 
     # Extract data from test file
-    data_points_list = extract_data(os.path.join(data_folder, df), begin_data, end_data)
+    data_points_list = extract_data_from_file(os.path.join(data_folder, df), begin_data, end_data)
 
     # Generate map dictionary
-    map_points = generate_map(data_points_list, ratio, Rot_mat, offset)
+    map_points = generate_map(data_points_list, ratio, Rot_mat, offset, os.path.join(data_folder, df), log_file_path,
+                              verbose)
 
     # Save map to file
     with open(os.path.join(data_folder, sample_ID + "_map" + map_file_extension), "w") as f:
@@ -161,4 +174,4 @@ for df in data_files:
             f.write("\t".join([str(e) for e in Pixel_ref[i, :]] + [reference_point_keyword+str(i+1)] +
                               [str(e) for e in Scan_ref_initial_values[i, :]]))
 
-print("============================== END ================================")
+log_text(prm.log_file_path, prm.verbose, "============================== END ================================")

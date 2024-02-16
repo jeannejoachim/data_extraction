@@ -12,14 +12,71 @@ from functools import partial
 from sklearn.metrics import r2_score
 
 
-def extract_data(file_path, begin_data, end_data):
+def log_text(log_file_path, verbose, text):
+    """
+    Function to print text in console and add it to a log file.
+
+    :param log_file_path: path of the log file
+    :param verbose: boolean parameter, when True text is printed to terminal, when False text is only written in logfile
+    :param text: string of the message to print and write
+    :return: nothing
+    """
+
+    if verbose:
+        print(text)
+
+    with open(log_file_path, "a") as lf:
+        lf.write(text + "\n")
+
+    return
+
+
+def extract_data(s, data_folder, file_keyword, file_extension, begin_data, end_data, prm, tol=1e-3):
+    """
+    Function to extract data for a given sample, and apply correction if needed.
+
+    :param s:
+    :param data_folder: 
+    :param file_keyword: 
+    :param file_extension: 
+    :param begin_data: 
+    :param end_data:
+    :param prm: file parameters
+    :param tol: 
+    :return: data_points_list
+    """
+    
+    # Gather all filenames
+    sample_initial_thickness_file = [f for f in os.listdir(data_folder) if s in f
+                                     if f.endswith(file_keyword + file_extension)][0]
+
+    # Extract all data point from first test file
+    data_points_list = extract_data_from_file(os.path.join(data_folder, sample_initial_thickness_file), 
+                                              begin_data, end_data)
+
+    # Apply corrections
+    sample_correction_thickness_files = [f for f in os.listdir(data_folder) if s in f
+                                         if file_keyword in f if f.endswith(file_extension)
+                                         if sample_initial_thickness_file not in f]
+
+    if len(sample_correction_thickness_files) != 0:
+        log_text(prm.log_file_path, prm.verbose,
+                 "\tmultiple test files found for this sample: launching data correction procedure")
+        data_points_list = correct_data_points(data_points_list, data_folder,
+                                               sample_initial_thickness_file, sample_correction_thickness_files,
+                                               begin_data, end_data, prm, tol=tol)
+    
+    return data_points_list
+
+
+def extract_data_from_file(file_path, begin_data, end_data):
     """
     Function to extract experimental data in the text file given as en input.
     Multiple data point are stored in one file, each between <DATA> and <END DATA>.
 
     :param file_path: chemin du fichier à traiter
-    :param begin_data: string after which data begin
-    :param end_data: string before which data end
+    :param begin_data: string after which data begin in data files
+    :param end_data: string before which data end in data files
     :return: data_points_list: list of time, positions and Fz for each point
     """
     data_points_list = []  # List to store data sets as dictionaries
@@ -70,11 +127,69 @@ def extract_data(file_path, begin_data, end_data):
     return data_points_list
 
 
-def extract_thickness(data_points_list):
+def correct_data_points(data_points_list, data_folder, sample_initial_test_file, sample_correction_files, begin_data,
+                        end_data, prm, tol=1e-3):
     """
-    Function to extract thickness and positions from raw data_points_list and convert them to arrays.
+    Function used to correct data_points_list of the initial test data with correction data saved in correction files.
 
-    :param data_points_list: data as extracted by extract_data
+    :param data_points_list: data list as extracted by extract_data_from_file
+    :param data_folder: data folder, containing initial and correction files
+    :param sample_initial_test_file: test file containing data from the original test on this sample
+    :param sample_correction_files: test file containing data from the test correction on this sample
+    :param begin_data: string after which data begin in data files
+    :param end_data: string before which data end in data files
+    :param prm: file parameters
+    :param tol: (optional) tolerance for the x and y coordinates matching, default is 1e-3
+    :return: data_points_list, data list with corrections
+    """
+
+    # Get x and y sensor position for initial data
+    xy_sensor_data = extract_xy_sensor(data_points_list, os.path.join(data_folder, sample_initial_test_file),
+                                       prm)
+    for i in range(len(sample_correction_files)):
+        log_text(prm.log_file_path, prm.verbose, "\t- correction with data from: " + sample_correction_files[i])
+
+        # Extract all data point from secondary test files
+        data_file_path = os.path.join(data_folder, sample_correction_files[i])
+        data_points_list_correction = extract_data_from_file(data_file_path, begin_data, end_data)
+
+        # Get x and y sensor position for correction data
+        xy_sensor_corr = extract_xy_sensor(data_points_list_correction, data_file_path, prm)
+
+        for j in range(len(data_points_list_correction)):
+            # Find line of corresponding point in initial data
+            pt_index = np.where((np.abs(xy_sensor_data[:, 0] - xy_sensor_corr[j, 0]) < tol) &   # column 0 = x
+                                (np.abs(xy_sensor_data[:, 1] - xy_sensor_corr[j, 1]) < tol))    # column 1 = y
+
+            if len(pt_index[0]) == 1:
+                pt_index = pt_index[0][0]  # extract value from tuple result
+            elif len(pt_index[0]) == 0:
+                log_text(prm.log_file_path, prm.verbose, "There is no coordinates in the initial data file (" +
+                         sample_initial_test_file + ") matching the point (x, y = " + str(xy_sensor_corr[j]) +
+                         ") extracted from the correction data file (" + sample_correction_files[i] + ").\n" +
+                         "Verify data or try to increase correction tolerance (tol = " + str(tol) + ").")
+                raise ValueError("There is no coordinates in the initial data file matching the current correction"
+                                 "point.\nCheck log file for more details.")
+            else:
+                log_text(prm.log_file_path, prm.verbose, "There are multiple coordinates in the initial data file (" +
+                         sample_initial_test_file + ") matching the point (x, y = " + str(xy_sensor_corr[j]) +
+                         ") extracted from the correction data file (" + sample_correction_files[i] + ").\n" +
+                         "Verify data or try to increase correction tolerance (tol = " + str(tol) + ").")
+                raise ValueError("There are multiple coordinates in the initial data file matching the current "
+                                 "correction point.\nCheck log file for more details.")
+
+            # Replace initial data with corrected data
+            data_points_list[pt_index] = data_points_list_correction[j]
+            log_text(prm.log_file_path, prm.verbose, "\t\t- point " + str(pt_index) + " replaced")
+
+    return data_points_list
+
+
+def calculate_thickness(data_points_list):
+    """
+    Function to calculate thickness and positions from raw data_points_list and convert them to arrays.
+
+    :param data_points_list: data list as extracted by extract_data_from_file
     :return: result_thickness: dictionary containing arrays of positions and thickness for all measurement points
     """
     # Initialize output dictionary
@@ -154,46 +269,32 @@ def extract_map(file_path, begin_map, end_map):
     return map_points
 
 
-def generate_map(data_points_list, ratio, Rot_mat, offset):
+def generate_map(data_points_list, ratio, Rot_mat, offset, data_file_path, prm):
     """
     Function to generate missing map file, used to translate sensor coordinates to pixel (picture) coordinates.
 
-    :param data_points_list: data as extracted by extract_data
+    :param data_points_list: data list as extracted by extract_data_from_file
     :param ratio: expansion ratio between sensor and pixel coordinates
     :param Rot_mat: rotation matrix between sensor and pixel coordinates
     :param offset: translation value between sensor and pixel coordinates
+    :param data_file_path: path to data file used in warning message
+    :param prm: file parameters
     :return: map_points: dictionary of x and y values in both sensor and pixel coordinates
     """
 
     # Create map points dictionary results
     map_points = {'PixelX': np.zeros((len(data_points_list)), dtype=int),
                   'PixelY': np.zeros((len(data_points_list)), dtype=int),
-                  'PointID': np.zeros((len(data_points_list)), dtype=int),
+                  'PointID': np.arange(len(data_points_list))+1,
                   'ScanX(mm)': np.zeros((len(data_points_list))),
                   'ScanY(mm)': np.zeros((len(data_points_list)))}
 
     # Extract position in sensor coordinates
-    for i in range(len(data_points_list)):
-        # Define PointID
-        map_points['PointID'][i] = i + 1
+    xy_sensor = extract_xy_sensor(data_points_list, data_file_path, prm)
 
-        # Extract x-position
-        if np.all(data_points_list[i]['pos_x']):
-            map_points['ScanX(mm)'][i] = data_points_list[i]['pos_x'][0]
-        else:
-            # If `pos_x` recorded for the test is not the same for all times
-            warnings.warn("WARNING x position change for point: " + str(i) + "in data:" + reference_data_file + "\n" +
-                          " Taking average value rounded at 1e-6.")
-            map_points['ScanX(mm)'][i] = np.round(np.average(data_points_list[i]['pos_x']), 6)
-
-        # Extract y-position
-        if np.all(data_points_list[i]['pos_y']):
-            map_points['ScanY(mm)'][i] = data_points_list[i]['pos_y'][0]
-        else:
-            # If `pos_x` recorded for the test is not the same for all times
-            warnings.warn("WARNING y position change for point: " + str(i) + "in data:" + reference_data_file + "\n" +
-                          " Taking average value rounded at 1e-6.")
-            map_points['ScanY(mm)'][i] = np.round(np.average(data_points_list[i]['pos_y']), 6)
+    # Store in map_points
+    map_points['ScanX(mm)'] = xy_sensor[:, 0]
+    map_points['ScanY(mm)'] = xy_sensor[:, 1]
 
     # X-flip scan reference data
     x_coordinate_adapted = -map_points['ScanX(mm)']
@@ -214,6 +315,38 @@ def generate_map(data_points_list, ratio, Rot_mat, offset):
     return map_points
 
 
+def extract_xy_sensor(data_points_list, data_file_path, prm, data_keys=['pos_x', 'pos_y']):
+    """
+    Function to extract given position (x or y) in data_points_list, with security in case position is not equal for all
+    time steps.
+
+    :param data_points_list: data list as extracted by extract_data_from_file
+    :param data_file_path: path to data file used in warning message
+    :param prm: file parameters
+    :param data_keys: (optional) list of data x and y position keys in data_points_list.
+    Default is ['pos_x', 'pos_y'], as defined in extract_data_from_file.
+    :return: xy_sensor: array with extracted sensor position, column = [x, y]
+    """
+    xy_sensor = np.zeros([len(data_points_list), 2])
+
+    for i in range(len(data_points_list)):
+        # Loop on data_keys entries
+        for k in data_keys:
+            # Get corresponding column number for xy_sensor
+            c = data_keys.index(k)
+            if np.all(data_points_list[i][k]):
+                # Take first time value if position recorded for the test is equal at all test times
+                xy_sensor[i, c] = data_points_list[i][k][0]
+            else:
+                # Take average if position recorded for the test changes during test
+                log_text(prm.log_file_path, prm.verbose, "\t\tWARNING " + position +
+                         " position is not equal for all time for point: " + str(i) +
+                         "in data:" + data_file_path + "\n" + " Taking average value rounded at 1e-6.")
+                xy_sensor[i, c] = np.round(np.average(data_points_list[i][k]), 6)
+
+    return xy_sensor
+
+
 def calculate_fz(z, E, Fini, R, nu):
     """
     Function to calculate Fz by equation.
@@ -228,25 +361,50 @@ def calculate_fz(z, E, Fini, R, nu):
     return (4/3)*(np.sqrt(R)/(1-nu**2))*E*(np.abs(z)**(3/2)) + Fini
 
 
-def extract_young_modulus(data_points_list, thickness, prm_indentation):
+def skip_indentation_point(i, result_indentation, prm):
     """
-    Function to extract the Young modulus from Fz fitting.
+    Skip point if indentation test failed
+
+    :param i: point ID
+    :param result_indentation: initial dictionary
+    :param prm: file parameters
+    :return: result_indentation: updated dictionary
+    """
+    result_indentation['E_fit'][i] = np.nan
+    result_indentation['Fz_0_fit'][i] = np.nan
+    result_indentation['corr_coeff'][i] = np.nan
+    result_indentation['pos_z_fit'].append([])
+    result_indentation['Fz_fit'].append([])
+    result_indentation['res_fit'].append(np.nan)
+    log_text(prm.log_file_path, prm.verbose, "WARNING Indentation test failed for data point:" + str(i + 1) + "\n" +
+             "Skipping this point in Young modulus extraction")
+
+    return result_indentation
+
+
+def calculate_young_modulus(data_points_list, thickness, prm_indentation, prm):
+    """
+    Function to calculate the Young modulus from Fz fitting.
 
     :param data_points_list: data extracted from indentation experiments
     :param thickness: data extracted from thickness experiments
     :param prm_indentation: thickness parameter object, containing namely:
-        * fit_start_Fz_value : start value for the Fz fit
-        * fit_stop_thickness_percent : stop value for the Fz fit
+        * fit_start_thickness_percent : start value for the Fz fit
+        * fit_range_thickness_percent : range value for the Fz fit
         * radius : sensor radius, in mm
         * nu : Poisson coefficient value
         * gravity : standard acceleration of gravity, in m/s², used to convert gf/mm² in kPa
+    :param prm: file parameters
     :return: result_indentation: dictionary containing fit results for all measurement points
+        * E_fit : array of Young modulus for each point
+        * Fz_0_fit : array of Fz origin on the fitting range for each point
+        * corr_coeff : array of correlation coefficients for each point
     """
 
-    # Initialization (note: lists necessary for pos_z_fit, Fz_fit and res_fit as the number of points to consider on
-    # the Fz curve is not the same from one point to the other)
+    # Initialization (note: pos_z_fit, Fz_fit and res_fit are lists as the number of points to consider on the Fz curve
+    # is not the same from one point to the other)
     result_indentation = {'E_fit': np.zeros(len(data_points_list)),
-                        'Fz_ini': np.zeros(len(data_points_list)),
+                        'Fz_0_fit': np.zeros(len(data_points_list)),
                         'corr_coeff': np.zeros(len(data_points_list)),
                         'pos_z_fit': [],
                         'Fz_fit': [],
@@ -257,38 +415,49 @@ def extract_young_modulus(data_points_list, thickness, prm_indentation):
         pos_z = data_points_list[i]["pos_z"]
         Fz = data_points_list[i]["Fz"]
 
-        # Fit range up until fit_stop_thickness_percent
-        thickness_limit = thickness[i]*(1-prm_indentation.fit_stop_thickness_percent/100)
-        ind_z_max = np.max(np.where(pos_z < -thickness_limit))
-        pos_z_fit = pos_z[:ind_z_max]
-        Fz_fit = Fz[:ind_z_max]
+        # Fit range from fit_start_thickness_percent
+        thickness_min = thickness[i] * (1 - prm_indentation.fit_start_thickness_percent / 100)
+        ind_z_min = np.min(np.where(pos_z > -thickness_min))
+        pos_z_fit = pos_z[ind_z_min:]
+        Fz_fit = Fz[ind_z_min:]
 
-        # Fit range starting after the first pike + Fz above given value
-        ind_Fz_positive = np.max(np.where(Fz_fit < 0)) + 1
-        if ind_Fz_positive == len(Fz_fit):
-            result_indentation['E_fit'][i] = np.nan
-            result_indentation['Fz_ini'][i] = np.nan
-            result_indentation['corr_coeff'][i] = np.nan
-            result_indentation['pos_z_fit'].append(pos_z_fit)
-            result_indentation['Fz_fit'].append(Fz_fit)
-            result_indentation['res_fit'].append(np.nan)
+        # Security check: fit range excludes first contact pike (Fz overshot + Fz below 0 for a few points)
+        ind_Fz_negative = np.where(Fz_fit < 0)[0]
+
+        if ind_Fz_negative.size > 0:
+            ind_Fz_min = np.max(ind_Fz_negative) + 1
+            if ind_Fz_min == len(Fz_fit):
+                # Skip this point: there is no positive value for Fz, so test failed
+                result_indentation = skip_indentation_point(i, result_indentation, prm)
+                continue
+            # Remove negative values from fit
+            Fz_fit = Fz_fit[ind_Fz_min:]
+            pos_z_fit = pos_z_fit[ind_Fz_min:]
+
+        # Stopping point with thickness range
+        pos_z_max = pos_z_fit[0] + thickness[i] * prm_indentation.fit_range_thickness_percent / 100
+
+        if pos_z_fit[-1] < pos_z_max:
+            # Skip this point: test stopped before reaching pos_z_max, so test failed
+            result_indentation = skip_indentation_point(i, result_indentation, prm)
             continue
-        ind_Fz_min = np.min(np.where(Fz_fit[ind_Fz_positive:] > prm_indentation.fit_start_Fz_value))
-        Fz_fit = Fz_fit[ind_Fz_positive:][ind_Fz_min:]
-        pos_z_fit = pos_z_fit[ind_Fz_positive:][ind_Fz_min:]
+
+        ind_z_max = np.max(np.where(pos_z_fit < pos_z_max))
+        pos_z_fit = pos_z_fit[:ind_z_max]
+        Fz_fit = Fz_fit[:ind_z_max]
 
         # Least square fit with some parameters (R, nu) given
         fitfunc = partial(calculate_fz, R=prm_indentation.radius, nu=prm_indentation.nu)
-        [E_fit, Fz_ini], _ = curve_fit(fitfunc, pos_z_fit-pos_z_fit[0], Fz_fit, bounds=(0, [2, 1]))
+        [E_fit, Fz_0_fit], _ = curve_fit(fitfunc, pos_z_fit-pos_z_fit[0], Fz_fit, bounds=(0, [2, 1]))
 
-        res_fit = np.array([calculate_fz(z-pos_z_fit[0], E_fit, Fz_ini, prm_indentation.radius, prm_indentation.nu)
+        res_fit = np.array([calculate_fz(z-pos_z_fit[0], E_fit, Fz_0_fit, prm_indentation.radius, prm_indentation.nu)
                             for z in pos_z_fit])
         E_fit = E_fit*prm_indentation.gravity
         corr_coeff = r2_score(Fz_fit, res_fit)
 
         # Store results
         result_indentation['E_fit'][i] = E_fit
-        result_indentation['Fz_ini'][i] = Fz_ini
+        result_indentation['Fz_0_fit'][i] = Fz_0_fit
         result_indentation['corr_coeff'][i] = corr_coeff
         result_indentation['pos_z_fit'].append(pos_z_fit)
         result_indentation['Fz_fit'].append(Fz_fit)
@@ -366,10 +535,10 @@ def plot_thickness_on_picture(s, thickness, prm, prm_thickness, contour_plot=Fal
     # Load image
     # Find picture file: contains sample name and picture keyword, and ends with appropriate extension
     image_file = [f for f in os.listdir(prm.data_folder) if s in f and prm.picture_keyword in f and
-                  f.endswith((".jpg", ".jpeg", ".bmp", ".png"))]
+                  f.endswith(prm.picture_extension)]
     if len(image_file) > 1:
-        warnings.warn("WARNING There is more than one image file with the same ID (" + s + ")\n" +
-                      "Taking image: " + image_file[0])
+        log_text(prm.log_file_path, prm.verbose, "WARNING There is more than one image file with the same ID (" + s +
+                 ")\n" + "Taking image: " + image_file[0])
     image_file = image_file[0]
 
     img = np.asarray(Image.open(os.path.join(prm.data_folder, image_file)))
@@ -395,15 +564,15 @@ def plot_thickness_on_picture(s, thickness, prm, prm_thickness, contour_plot=Fal
                       vmax=thickness.max())
         fig.colorbar(pcm, label='thickness')
         # Scatter plot of measurement points
-        plt.scatter(vect_px_sorted_by_point_id[0, :], vect_px_sorted_by_point_id[1, :], c=thickness, s=2., cmap="jet",
-                    vmin=thickness.min(), vmax=thickness.max())
+        plt.scatter(vect_px_sorted_by_point_id[0, :], vect_px_sorted_by_point_id[1, :], s=2., c="k")#, #c="k", #thickness, #cmap="jet",
+                    #vmin=thickness.min(), vmax=thickness.max())
     else:
         # Surface plot with more transparence
         ax.pcolormesh(xpx, ypx, zpx, shading='nearest', cmap="jet", alpha=prm_thickness.alpha/2, vmin=thickness.min(),
                       vmax=thickness.max())
         # Contour plot with inline labels
         CS = ax.contour(xpx, ypx, zpx, cmap="jet", vmin=thickness.min(), vmax=thickness.max())
-        ax.clabel(CS, inline=True, inline_spacing=-2, fontsize=8)
+        ax.clabel(CS, inline=True, inline_spacing=-2, fontsize=5)
 
     if prm_thickness.cropping_frame != 0:
         # Perform cropping if wanted
@@ -429,14 +598,18 @@ def plot_fz_curve_fit(s, i, data_point, result_indentation):
     fig = plt.figure()
 
     plt.plot(data_point["pos_z"], data_point["Fz"], "--k", linewidth=0.5)
-    plt.plot(result_indentation['pos_z_fit'][i], result_indentation['Fz_fit'][i], "-k", linewidth=0.5)
-    plt.plot(result_indentation['pos_z_fit'][i], result_indentation['res_fit'][i], '-b')
-    plt.plot([result_indentation['pos_z_fit'][i][0], result_indentation['pos_z_fit'][i][0]],
-             [np.min(data_point["Fz"]), np.max(data_point["Fz"])],
-             "-k", linewidth=0.5)
-    plt.plot([result_indentation['pos_z_fit'][i][-1], result_indentation['pos_z_fit'][i][-1]],
-             [np.min(data_point["Fz"]), np.max(data_point["Fz"])],
-             "-k", linewidth=0.5)
+
+    if len(result_indentation['pos_z_fit'][i]) != 0:
+        # Plot fitting range and curve, if test has not failed
+        plt.plot(result_indentation['pos_z_fit'][i], result_indentation['Fz_fit'][i], "-k", linewidth=0.5)
+        plt.plot(result_indentation['pos_z_fit'][i], result_indentation['res_fit'][i], '-b')
+        plt.plot([result_indentation['pos_z_fit'][i][0], result_indentation['pos_z_fit'][i][0]],
+                 [np.min(data_point["Fz"]), np.max(data_point["Fz"])],
+                 "-k", linewidth=0.5)
+        plt.plot([result_indentation['pos_z_fit'][i][-1], result_indentation['pos_z_fit'][i][-1]],
+                 [np.min(data_point["Fz"]), np.max(data_point["Fz"])],
+                 "-k", linewidth=0.5)
+
     plt.xlabel("pos_z [mm]")
     plt.ylabel("Fz [gF]")
     plt.title(s + " - point ID " + str(i+1))

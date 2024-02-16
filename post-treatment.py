@@ -1,6 +1,7 @@
 #-----------------------------------------------------------------------------
 # Post-treatment script
-#
+# Test failures: number after test name giving priority (data from thickness (contain all points) erased by those in
+# thickness2 (contain previously failed points only))
 # Dernière MAJ : 12-09-2023
 #-----------------------------------------------------------------------------
 
@@ -11,45 +12,49 @@ import re
 import numpy as np
 import matplotlib.pyplot as plt
 import pickle
+from datetime import datetime
+# Function import
+from functions import *
 
-try:
-    from functions import *
-except:
-    pass
 
-class parameters_general():
+class parameters_files():
     # Data folder path, the 'r' prefix is important to convert the path in raw string!
-    data_folder = r"C:\Users\Jeanne\Documents\Documents_communs\Laura_donnees\Fichiers pour générer .map manquants\Reference"
+    data_folder = r"C:\Users\Jeanne\Documents\Documents_communs\Laura_donnees\Donnees\BMC-007\test"
     filename_separator = "_"       # string that separates sample ID to test name in the filename
     filename_ID_position = 0
     # 0 = sample ID is the first element given (so appears before the first file_name_separator)
-    show_plots = True
-    sample_ID = ["Z2-JAB9793"] #C2-JAB9730", "E1-JAB9735", "B2-JAB9727", "I3-JAB9749"]
-    treat_all_files_in_data_folder = False
-    # if False, treatment is performed on given "sample_ID" list
+    verbose = True          # if True, messages appear in terminal
+    show_plots = False
+    treat_all_files_in_data_folder = True
+    # if False, treatment is performed on given "sample_ID" list (below)
     # if True, "sample_ID" is not used and sample ID is retrieved from all files in data_folder
-    picture_keyword = "map"     # Keyword in filename for test real picture
+    sample_ID = ["Z2-JAB9793"]
+    picture_keyword = ""     # Keyword in filename for test real picture
+    picture_extension = (".bmp")  # Tuple of strings for possible extension of the test pictures
+
 
 class parameters_thickness():
     plot_2D = True          # Plot and save in .png
     plot_on_picture = True
     plot_contour = True  # Plot and save in .png
-    cropping_frame = 100  # Picture cropping (in pixels) around measurement points limits. 0 = no cropping
+    cropping_frame = 150  # Picture cropping (in pixels) around measurement points limits. 0 = no cropping
     plot_3D = True          # Plot and save in .png and .pickle for interactivity
     alpha = 0.5  # 0 = transparent, 1 = opaque (used for if plot_thickness_on_image = True)
     file_keyword = "thickness"   # Keyword in filename for this test
-    file_extention = ".txt"        # File extension for this test
+    file_extension = ".txt"        # File extension for this test
     nb_interp = 100     # Number of points for the data interpolation used to draw color maps
     begin_data = "<DATA>"      # String after which the data point begins
     end_data = "<END DATA>"    # String before which the data point ends
     begin_map = "MAPPING"  # String contained in the line before column name line (entire line will be removed)
     end_map = "Reference"  # String contained in the line after points data (entire line will be removed)
 
+
 class parameters_indentation():
-    fit_start_Fz_value = 0            # Start value for the Fz fit = Fz value after the first pike
-    fit_stop_thickness_percent = 10     # Stop value for the Fz fit = thickness percentage (at the same point)
+    fit_start_thickness_percent = 1     # Start value for the Fz fit = thickness percentage (at the same point)
+    fit_range_thickness_percent = 15    # Range (on thickness percentage) on which Fz fit is performed = linear domain
+    # If sensor position values is less than thickness range wanted for fitting, the point is skipped (test failure)
     file_keyword = "indentation"   # Keyword in filename for this test
-    file_extention = ".txt"        # File format for this test
+    file_extension = ".txt"        # File format for this test
     begin_data = "<DATA>"  # String after which the data point begins
     end_data = "<divider>"  # String before which the data point ends
     nu = 0.5        # Poisson coefficient value
@@ -58,93 +63,112 @@ class parameters_indentation():
     plot_fz_curve_fit = True
 
 
-print("================================\n" + "Welcome to post-treatment.py\n" + "================================\n")
 
-prm = parameters_general()
+prm = parameters_files()
 prm_thickness = parameters_thickness()
 prm_indentation = parameters_indentation()
 
-#TODO récupérer tous les indices des échantillons dans le dossier => généraliser pour plusieurs essais
-# if prm.treat_all_files_in_data_folder:
-#     #TODO écraser sample_ID, utiliser ID_position#
-# else:
-#     sample_ID = prm.sample_ID
-sample_ID = prm.sample_ID
-##TODO add log file with all print messages + add verbose parameter
-for s in sample_ID:
-    print("[" + str(sample_ID.index(s)+1) + "/" + str(len(sample_ID)) + "] " + "Treating sample " + s)
+prm.log_file_path = os.path.join(prm.data_folder, "0_post-treatment-log_" +
+                                 datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + ".log")
+
+log_text(prm.log_file_path, prm.verbose,
+         "================================\n" + "Welcome to post-treatment.py\n" + "================================\n")
+
+try:
     ####################################################
-    # THICKNESS
+    # GET SAMPLES
     ####################################################
-    # f_thickness = [f for f in os.listdir(prm.data_folder) if (prm_thickness.file_keyword and prm_thickness.file_extention) in f]
-    # TODO généraliser avec plusieurs fichiers pour 1 sample
-    file = s + prm.filename_separator + prm_thickness.file_keyword + prm_thickness.file_extention
-    # TODO Vérifier avec nom fichiers réels
+    if prm.treat_all_files_in_data_folder:
+        all_thickness_files = [f for f in os.listdir(prm.data_folder) if prm_thickness.file_keyword in f
+                               if f.endswith(prm_thickness.file_extension)]
+        sample_ID = list(set([f.split(prm.filename_separator)[prm.filename_ID_position] for f in all_thickness_files]))
+        # set() conversion removes duplicate
+    else:
+        sample_ID = prm.sample_ID
 
-    # TODO généraliser pour des points dans des fichiers différents
-    # Pour un fichier, tous points de mesure
+    for s in sample_ID:
+        log_text(prm.log_file_path, prm.verbose,
+                 "[" + str(sample_ID.index(s)+1) + "/" + str(len(sample_ID)) + "] " + "Treating sample " + s)
+        ####################################################
+        # THICKNESS
+        ####################################################
+        log_text(prm.log_file_path, prm.verbose, "\n1. Thickness data post-treatment:")
 
-    # Extract all data point
-    data_points_list = extract_data(os.path.join(prm.data_folder, file),
-                                    prm_thickness.begin_data, prm_thickness.end_data)
-    result_thickness = extract_thickness(data_points_list)
-    result_thickness['x_interp'], result_thickness['y_interp'], result_thickness['thickness_interp'] = interpolate_data(
-        result_thickness['pos_x'], result_thickness['pos_y'], result_thickness['thickness'], prm_thickness.nb_interp)
+        # Extract data
+        log_text(prm.log_file_path, prm.verbose, "- thickness data extraction...")
+        data_points_list = extract_data(s, prm.data_folder, prm_thickness.file_keyword, prm_thickness.file_extension,
+                                        prm_thickness.begin_data, prm_thickness.end_data, prm, tol=1e-3)
+        log_text(prm.log_file_path, prm.verbose, "\t... thickness data extracted")
 
-    # Plot graphs
-    if prm_thickness.plot_2D:
-        fig = plot_thickness_2d(s, result_thickness)
-        fig.savefig(os.path.join(prm.data_folder, s + "_thickness_2D.png"), bbox_inches='tight')
-        print("\t - thickness 2D plot saved")
-        if not prm.show_plots:
-            plt.close(fig)
-    if prm_thickness.plot_3D:
-        fig = plot_thickness_3d(s, result_thickness)
-        fig.savefig(os.path.join(prm.data_folder, s + "_thickness_3D.png"), bbox_inches='tight')
-        pickle.dump(fig, open(os.path.join(prm.data_folder, s + "_thickness_3D.fig.pickle"), 'wb'))
-        print("\t - thickness 3D plot saved")
-        if not prm.show_plots:
-            plt.close(fig)
-    if prm_thickness.plot_on_picture:
-        fig = plot_thickness_on_picture(s, result_thickness['thickness'], prm, prm_thickness)
-        fig.savefig(os.path.join(prm.data_folder, s + "_thickness_on_image.png"), bbox_inches='tight')
-        print("\t - thickness plot on picture saved")
-        if not prm.show_plots:
-            plt.close(fig)
-    if prm_thickness.plot_contour:
-        fig = plot_thickness_on_picture(s, result_thickness['thickness'], prm, prm_thickness, contour_plot=True)
-        fig.savefig(os.path.join(prm.data_folder, s + "_thickness_on_image_contour.png"), bbox_inches='tight')
-        print("\t - thickness contour plot on picture saved")
-        if not prm.show_plots:
-            plt.close(fig)
+        # Calculate thickness and interpolate results
+        result_thickness = calculate_thickness(data_points_list)
+        result_thickness['x_interp'], result_thickness['y_interp'], result_thickness['thickness_interp'] = interpolate_data(
+            result_thickness['pos_x'], result_thickness['pos_y'], result_thickness['thickness'], prm_thickness.nb_interp)
 
-    ####################################################
-    # INDENTATION
-    ####################################################
-    # Pour un fichier, tous points de mesure
-    # f_indentation = [f for f in os.listdir(prm.data_folder) if (prm_indentation.file_keyword and prm_indentation.file_extention) in f]
-    # TODO généraliser avec plusieurs fichiers pour 1 sample
-    file = s + prm.filename_separator + prm_indentation.file_keyword + prm_indentation.file_extention
-
-    # Extract all data point
-    data_points_list = extract_data(os.path.join(prm.data_folder, file),
-                                    prm_indentation.begin_data, prm_indentation.end_data)
-    result_indentation = extract_young_modulus(data_points_list, result_thickness['thickness'], prm_indentation)
-
-    # Graphs
-    if prm_indentation.plot_fz_curve_fit:
-        for i in range(len(data_points_list)):
-            fig = plot_fz_curve_fit(s, i, data_points_list[i], result_indentation)
-            fig.savefig(os.path.join(prm.data_folder, s + "_fz_curve_fit_ID" + str(i+1) + ".png"), bbox_inches='tight')
+        # Plot graphs
+        if prm_thickness.plot_2D:
+            fig = plot_thickness_2d(s, result_thickness)
+            fig.savefig(os.path.join(prm.data_folder, s + "_thickness_2D.png"), bbox_inches='tight')
+            log_text(prm.log_file_path, prm.verbose, "- thickness 2D plot saved")
             if not prm.show_plots:
                 plt.close(fig)
-        print("\t - fz curve fit saved")
+        if prm_thickness.plot_3D:
+            fig = plot_thickness_3d(s, result_thickness)
+            fig.savefig(os.path.join(prm.data_folder, s + "_thickness_3D.png"), bbox_inches='tight')
+            pickle.dump(fig, open(os.path.join(prm.data_folder, s + "_thickness_3D.fig.pickle"), 'wb'))
+            log_text(prm.log_file_path, prm.verbose, "- thickness 3D plot saved")
+            if not prm.show_plots:
+                plt.close(fig)
+        if prm_thickness.plot_on_picture:
+            fig = plot_thickness_on_picture(s, result_thickness['thickness'], prm, prm_thickness)
+            fig.savefig(os.path.join(prm.data_folder, s + "_thickness_on_image.png"), bbox_inches='tight')
+            log_text(prm.log_file_path, prm.verbose, "- thickness plot on picture saved")
+            if not prm.show_plots:
+                plt.close(fig)
+        if prm_thickness.plot_contour:
+            fig = plot_thickness_on_picture(s, result_thickness['thickness'], prm, prm_thickness, contour_plot=True)
+            fig.savefig(os.path.join(prm.data_folder, s + "_thickness_on_image_contour.png"), bbox_inches='tight')
+            log_text(prm.log_file_path, prm.verbose, "- thickness contour plot on picture saved")
+            if not prm.show_plots:
+                plt.close(fig)
 
-    ####################################################
-    # Excel output
-    ####################################################
+        ####################################################
+        # INDENTATION
+        ####################################################
+        log_text(prm.log_file_path, prm.verbose, "\n2. Indentation data post-treatment:")
 
-    print("\t sample finished!")
+        # Extract data
+        log_text(prm.log_file_path, prm.verbose, "- indentation data extraction...")
+        data_points_list = extract_data(s, prm.data_folder, prm_indentation.file_keyword, prm_indentation.file_extension,
+                                        prm_indentation.begin_data, prm_indentation.end_data, prm, tol=1e-3)
+        log_text(prm.log_file_path, prm.verbose, "- indentation data extracted")
 
-if prm.show_plots:
-    plt.show()
+        # Calculate Young modulus from indentation curve fitting
+        result_indentation = calculate_young_modulus(data_points_list, result_thickness['thickness'], prm_indentation,
+                                                     prm)
+
+        # Graphs
+        if prm_indentation.plot_fz_curve_fit:
+            log_text(prm.log_file_path, prm.verbose,
+                     "- generating fz curve fit for " + str(len(data_points_list)) + " points...")
+            for i in range(len(data_points_list)):
+                fig = plot_fz_curve_fit(s, i, data_points_list[i], result_indentation)
+                fig.savefig(os.path.join(prm.data_folder, s + "_fz_curve_fit_ID" + str(i+1) + ".png"), bbox_inches='tight')
+                if not prm.show_plots:
+                    plt.close(fig)
+            log_text(prm.log_file_path, prm.verbose, "\t... fz curve fit saved")
+
+        ####################################################
+        # Excel output
+        ####################################################
+        # TODO
+        log_text(prm.log_file_path, prm.verbose, "\nSample finished!\n--------------------------------")
+
+    if prm.show_plots:
+        plt.show()
+
+except Exception as e:
+    log_text(prm.log_file_path, prm.verbose, str(type(e)) + ": " + str(e))
+    raise
+
+log_text(prm.log_file_path, prm.verbose, "============== END ==============")
