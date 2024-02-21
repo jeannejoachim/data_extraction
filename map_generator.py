@@ -24,8 +24,8 @@ except:
 data_folder = r"C:\Users\Jeanne\Documents\Documents_communs\Laura_donnees\Fichiers pour générer .map manquants"
 # folder path containing data tests for sample with missing .map
 reference_map_subfolder = r"Reference"  # sub-folder containing reference map with the same reference points
-filename_separator = "_"    # string that separates sample ID to test name in the filename
-filename_ID_position = 0    # 0 = sample ID is the first element given (so appears before the first file_name_separator)
+test_name_separator = "_"    # string that separates sample ID to test name in the filename
+sample_ID_position = 0    # 0 = sample ID is the first element given (so appears before the first file_name_separator)
 
 # Reference coordinates (1st column = x, 2nd column = y) from map with same reference points
 Pixel_ref = np.array([[506, 945],   # Reference1
@@ -134,7 +134,7 @@ data_files = [f for f in os.listdir(data_folder) if data_file_extension in f if 
 
 # Loop on data test files
 for df in data_files:
-    sample_ID = df.split(filename_separator)[filename_ID_position]
+    sample_ID = df.split(test_name_separator)[sample_ID_position]
     log_text(prm.log_file_path, prm.verbose, "[" + str(data_files.index(df) + 1) + "/" + str(len(data_files)) + "] " +
              "Treating sample " + sample_ID)
 

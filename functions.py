@@ -448,7 +448,7 @@ def calculate_young_modulus(data_points_list, thickness, prm_indentation, prm):
 
         # Least square fit with some parameters (R, nu) given
         fitfunc = partial(calculate_fz, R=prm_indentation.radius, nu=prm_indentation.nu)
-        [E_fit, Fz_0_fit], _ = curve_fit(fitfunc, pos_z_fit-pos_z_fit[0], Fz_fit, bounds=(0, [2, 1]))
+        [E_fit, Fz_0_fit], _ = curve_fit(fitfunc, pos_z_fit-pos_z_fit[0], Fz_fit, method='lm')
 
         res_fit = np.array([calculate_fz(z-pos_z_fit[0], E_fit, Fz_0_fit, prm_indentation.radius, prm_indentation.nu)
                             for z in pos_z_fit])
@@ -464,6 +464,26 @@ def calculate_young_modulus(data_points_list, thickness, prm_indentation, prm):
         result_indentation['res_fit'].append(res_fit)
 
     return result_indentation
+
+
+def plot_thickness_z_curve(s, i, data_point, thickness_value):
+    """
+
+    :param s:
+    :param i:
+    :param data_point:
+    :param thickness_value:
+    :return:
+    """
+    fig = plt.figure()
+    plt.plot([data_point['time'][0], data_point['time'][-1]], [thickness_value, thickness_value], '--b')
+    plt.plot(data_point['time'], -data_point['pos_z'], 'k-')
+    plt.ylabel("-(pos_z) [mm]")
+    plt.xlabel("time [s]")
+    plt.legend(["thickness value [mm] = " + str(round(thickness_value, 3))])
+    plt.title(s + " - point ID " + str(i))
+
+    return fig
 
 
 def plot_thickness_2d(s, result_thickness):
@@ -585,7 +605,7 @@ def plot_thickness_on_picture(s, thickness, prm, prm_thickness, contour_plot=Fal
     return fig
 
 
-def plot_fz_curve_fit(s, i, data_point, result_indentation):
+def plot_fz_curve_fit(s, i, data_point, result_indentation, fit_range_thickness_percent):
     """
     Function to plot Fz evolution with z position of the sensor and the curve fit used to extract the Young modulus.
 
@@ -593,6 +613,7 @@ def plot_fz_curve_fit(s, i, data_point, result_indentation):
     :param i: integer, point ID
     :param data_point: indentation data results for the given point
     :param result_indentation: dictionary containing fit results for all measurement points
+    :param fit_range_thickness_percent: thickness range used for the fit, used in the legend
     :return: fig object, Fz graph for the given point
     """
     fig = plt.figure()
@@ -613,8 +634,8 @@ def plot_fz_curve_fit(s, i, data_point, result_indentation):
     plt.xlabel("pos_z [mm]")
     plt.ylabel("Fz [gF]")
     plt.title(s + " - point ID " + str(i+1))
-    plt.legend(["original data", "data used for the fit search",
-                "curve fit for E=" + str(round(result_indentation['E_fit'][i], 2)) + " kPa (R² = " +
-                str(round(result_indentation['corr_coeff'][i], 2)) + ")"])
+    plt.legend(["original data", "data used for the fit search (" + str(fit_range_thickness_percent) +
+                " % of point thickness)", "curve fit for E=" + str(round(result_indentation['E_fit'][i], 2)) +
+                " kPa (R² = " + str(round(result_indentation['corr_coeff'][i], 2)) + ")"])
 
     return fig
