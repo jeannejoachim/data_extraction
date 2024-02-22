@@ -13,7 +13,7 @@ from sklearn.metrics import r2_score
 import logging
 
 
-def extract_data(s, data_folder, file_keyword, file_extension, begin_data, end_data, prm, tol=1e-3):
+def extract_data(s, data_folder, file_keyword, file_extension, begin_data, end_data, tol=1e-3):
     """
     Function to extract data for a given sample, and apply correction if needed.
 
@@ -45,7 +45,7 @@ def extract_data(s, data_folder, file_keyword, file_extension, begin_data, end_d
         logging.info("... Multiple test files found for this sample: launching data correction procedure")
         data_points_list = correct_data_points(data_points_list, data_folder,
                                                sample_initial_thickness_file, sample_correction_thickness_files,
-                                               begin_data, end_data, prm, tol=tol)
+                                               begin_data, end_data, tol=tol)
     
     return data_points_list
 
@@ -109,7 +109,7 @@ def extract_data_from_file(file_path, begin_data, end_data):
 
 
 def correct_data_points(data_points_list, data_folder, sample_initial_test_file, sample_correction_files, begin_data,
-                        end_data, prm, tol=1e-3):
+                        end_data, tol=1e-3):
     """
     Function used to correct data_points_list of the initial test data with correction data saved in correction files.
 
@@ -125,8 +125,7 @@ def correct_data_points(data_points_list, data_folder, sample_initial_test_file,
     """
 
     # Get x and y sensor position for initial data
-    xy_sensor_data = extract_xy_sensor(data_points_list, os.path.join(data_folder, sample_initial_test_file),
-                                       prm)
+    xy_sensor_data = extract_xy_sensor(data_points_list, os.path.join(data_folder, sample_initial_test_file))
     for i in range(len(sample_correction_files)):
         logging.info("... Correction with data from: " + sample_correction_files[i])
 
@@ -135,7 +134,7 @@ def correct_data_points(data_points_list, data_folder, sample_initial_test_file,
         data_points_list_correction = extract_data_from_file(data_file_path, begin_data, end_data)
 
         # Get x and y sensor position for correction data
-        xy_sensor_corr = extract_xy_sensor(data_points_list_correction, data_file_path, prm)
+        xy_sensor_corr = extract_xy_sensor(data_points_list_correction, data_file_path)
 
         for j in range(len(data_points_list_correction)):
             # Find line of corresponding point in initial data
@@ -269,7 +268,7 @@ def generate_map(data_points_list, ratio, Rot_mat, offset, data_file_path, prm):
                   'ScanY(mm)': np.zeros((len(data_points_list)))}
 
     # Extract position in sensor coordinates
-    xy_sensor = extract_xy_sensor(data_points_list, data_file_path, prm)
+    xy_sensor = extract_xy_sensor(data_points_list, data_file_path)
 
     # Store in map_points
     map_points['ScanX(mm)'] = xy_sensor[:, 0]
@@ -294,7 +293,7 @@ def generate_map(data_points_list, ratio, Rot_mat, offset, data_file_path, prm):
     return map_points
 
 
-def extract_xy_sensor(data_points_list, data_file_path, prm, data_keys=['pos_x', 'pos_y']):
+def extract_xy_sensor(data_points_list, data_file_path, data_keys=['pos_x', 'pos_y']):
     """
     Function to extract given position (x or y) in data_points_list, with security in case position is not equal for all
     time steps.
@@ -339,7 +338,7 @@ def calculate_fz(z, E, Fini, R, nu):
     return (4/3)*(np.sqrt(R)/(1-nu**2))*E*(np.abs(z)**(3/2)) + Fini
 
 
-def skip_indentation_point(i, result_indentation, prm):
+def skip_indentation_point(i, result_indentation):
     """
     Skip point if indentation test failed
 
@@ -348,12 +347,12 @@ def skip_indentation_point(i, result_indentation, prm):
     :param prm: file parameters
     :return: result_indentation: updated dictionary
     """
-    result_indentation['E_fit'][i] = np.nan
+    result_indentation['E'][i] = np.nan
     result_indentation['Fz_0_fit'][i] = np.nan
     result_indentation['corr_coeff'][i] = np.nan
-    result_indentation['pos_z_fit'].append([])
-    result_indentation['Fz_fit'].append([])
-    result_indentation['res_fit'].append(np.nan)
+    result_indentation['pos_z_fit_range'].append([])
+    result_indentation['Fz_fit_range'].append([])
+    result_indentation['Fz_fitted_curve'].append(np.nan)
     logging.warning("Indentation test failed for data point:" + str(i + 1) +
                     ". Skipping this point in Young modulus extraction")
 
@@ -374,72 +373,83 @@ def calculate_young_modulus(data_points_list, thickness, prm_indentation, prm):
         * gravity : standard acceleration of gravity, in m/s², used to convert gf/mm² in kPa
     :param prm: file parameters
     :return: result_indentation: dictionary containing fit results for all measurement points
-        * E_fit : array of Young modulus for each point
-        * Fz_0_fit : array of Fz origin on the fitting range for each point
-        * corr_coeff : array of correlation coefficients for each point
+        * pos_x:
+        * pos_y:
+        * E: array of Young modulus for each point
+        * Fz_0_fit: array of Fz origin on the fitting range for each point
+        * corr_coeff: array of correlation coefficients for each point
+        * pos_z_fit_range:
+        * Fz_fit_range:
+        * Fz_fitted_curve:
     """
 
-    # Initialization (note: pos_z_fit, Fz_fit and res_fit are lists as the number of points to consider on the Fz curve
-    # is not the same from one point to the other)
-    result_indentation = {'E_fit': np.zeros(len(data_points_list)),
-                        'Fz_0_fit': np.zeros(len(data_points_list)),
-                        'corr_coeff': np.zeros(len(data_points_list)),
-                        'pos_z_fit': [],
-                        'Fz_fit': [],
-                        'res_fit': []}
+    # Initialization (note: pos_z_fit_range, Fz_fit_range and Fz_fitted_curve are lists as the number of points to
+    # consider on the Fz curve is not the same from one point to the other)
+    result_indentation = {'pos_x': np.zeros(len(data_points_list)),
+                          'pos_y': np.zeros(len(data_points_list)),
+                          'E': np.zeros(len(data_points_list)),
+                          'Fz_0': np.zeros(len(data_points_list)),
+                          'corr_coeff': np.zeros(len(data_points_list)),
+                          'pos_z_fit_range': [],
+                          'Fz_fit_range': [],
+                          'Fz_fitted_curve': []}
 
     for i in range(len(data_points_list)):
-        # Data
+        # Get x and y coordinates for the current point
+        result_indentation['pos_x'][i] = np.mean(data_points_list[i]["pos_x"])
+        result_indentation['pos_y'][i] = np.mean(data_points_list[i]["pos_y"])
+
+        # Define data
         pos_z = data_points_list[i]["pos_z"]
         Fz = data_points_list[i]["Fz"]
 
         # Fit range from fit_start_thickness_percent
         thickness_min = thickness[i] * (1 - prm_indentation.fit_start_thickness_percent / 100)
         ind_z_min = np.min(np.where(pos_z > -thickness_min))
-        pos_z_fit = pos_z[ind_z_min:]
-        Fz_fit = Fz[ind_z_min:]
+        pos_z_fit_range = pos_z[ind_z_min:]
+        Fz_fit_range = Fz[ind_z_min:]
 
         # Security check: fit range excludes first contact pike (Fz overshot + Fz below 0 for a few points)
-        ind_Fz_negative = np.where(Fz_fit < 0)[0]
+        ind_Fz_negative = np.where(Fz_fit_range < 0)[0]
 
         if ind_Fz_negative.size > 0:
             ind_Fz_min = np.max(ind_Fz_negative) + 1
-            if ind_Fz_min == len(Fz_fit):
+            if ind_Fz_min == len(Fz_fit_range):
                 # Skip this point: there is no positive value for Fz, so test failed
-                result_indentation = skip_indentation_point(i, result_indentation, prm)
+                result_indentation = skip_indentation_point(i, result_indentation)
                 continue
             # Remove negative values from fit
-            Fz_fit = Fz_fit[ind_Fz_min:]
-            pos_z_fit = pos_z_fit[ind_Fz_min:]
+            Fz_fit_range = Fz_fit_range[ind_Fz_min:]
+            pos_z_fit_range = pos_z_fit_range[ind_Fz_min:]
 
         # Stopping point with thickness range
-        pos_z_max = pos_z_fit[0] + thickness[i] * prm_indentation.fit_range_thickness_percent / 100
+        pos_z_max = pos_z_fit_range[0] + thickness[i] * prm_indentation.fit_range_thickness_percent / 100
 
-        if pos_z_fit[-1] < pos_z_max:
+        if pos_z_fit_range[-1] < pos_z_max:
             # Skip this point: test stopped before reaching pos_z_max, so test failed
-            result_indentation = skip_indentation_point(i, result_indentation, prm)
+            result_indentation = skip_indentation_point(i, result_indentation)
             continue
 
-        ind_z_max = np.max(np.where(pos_z_fit < pos_z_max))
-        pos_z_fit = pos_z_fit[:ind_z_max]
-        Fz_fit = Fz_fit[:ind_z_max]
+        ind_z_max = np.max(np.where(pos_z_fit_range < pos_z_max))
+        pos_z_fit_range = pos_z_fit_range[:ind_z_max]
+        Fz_fit_range = Fz_fit_range[:ind_z_max]
 
         # Least square fit with some parameters (R, nu) given
         fitfunc = partial(calculate_fz, R=prm_indentation.radius, nu=prm_indentation.nu)
-        [E_fit, Fz_0_fit], _ = curve_fit(fitfunc, pos_z_fit-pos_z_fit[0], Fz_fit, method='lm')
+        [E, Fz_0], _ = curve_fit(fitfunc, pos_z_fit_range-pos_z_fit_range[0], Fz_fit_range, method='lm')
 
-        res_fit = np.array([calculate_fz(z-pos_z_fit[0], E_fit, Fz_0_fit, prm_indentation.radius, prm_indentation.nu)
-                            for z in pos_z_fit])
-        E_fit = E_fit*prm_indentation.gravity
-        corr_coeff = r2_score(Fz_fit, res_fit)
+        Fz_fitted_curve = np.array([calculate_fz(z-pos_z_fit_range[0], E, Fz_0, prm_indentation.radius, prm_indentation.nu)
+                            for z in pos_z_fit_range])
+        E = E*prm_indentation.gravity
+        corr_coeff = r2_score(Fz_fit_range, Fz_fitted_curve)
 
         # Store results
-        result_indentation['E_fit'][i] = E_fit
-        result_indentation['Fz_0_fit'][i] = Fz_0_fit
+        result_indentation['E'][i] = E
+        result_indentation['Fz_0'][i] = Fz_0
         result_indentation['corr_coeff'][i] = corr_coeff
-        result_indentation['pos_z_fit'].append(pos_z_fit)
-        result_indentation['Fz_fit'].append(Fz_fit)
-        result_indentation['res_fit'].append(res_fit)
+        result_indentation['pos_z_fit_range'].append(pos_z_fit_range)
+        result_indentation['Fz_fit_range'].append(Fz_fit_range)
+        result_indentation['Fz_fitted_curve'].append(Fz_fitted_curve)
 
     return result_indentation
 
@@ -464,12 +474,12 @@ def plot_thickness_z_curve(s, i, data_point, thickness_value):
     return fig
 
 
-def plot_thickness_2d(s, result_thickness):
+def plot_interpolated_surface(s, result_interpolated, data_key, data_unit):
     """
     Function to plot thickness interpolation surface on a 2D graph.
 
     :param s: string of the sample ID
-    :param result_thickness: dictionary containing results extracted from thickness test, namely:
+    :param result_interpolated: dictionary containing results extracted from test, namely:
         * pos_x: x position extracted from data
         * pos_y: y position extracted from data
         * thickness: thickness extracted from data
@@ -480,14 +490,14 @@ def plot_thickness_2d(s, result_thickness):
     """
     fig = plt.figure()
     ax = fig.add_subplot(111)
-    pcm = ax.pcolormesh(result_thickness['x_interp'], result_thickness['y_interp'],
-                        result_thickness['thickness_interp'], shading='nearest', cmap="jet",
-                        vmin=result_thickness['thickness'].min(), vmax=result_thickness['thickness'].max())
-    fig.colorbar(pcm, label='thickness')
-    plt.scatter(result_thickness['pos_x'], result_thickness['pos_y'], c=result_thickness['thickness'], ec='k',
-                cmap="jet", vmin=result_thickness['thickness'].min(), vmax=result_thickness['thickness'].max())
-    plt.xlabel("x")
-    plt.ylabel("y")
+    pcm = ax.pcolormesh(result_interpolated['x_interp'], result_interpolated['y_interp'],
+                        result_interpolated[data_key + '_interp'], shading='nearest', cmap="jet",
+                        vmin=result_interpolated[data_key].min(), vmax=result_interpolated[data_key].max())
+    fig.colorbar(pcm, label=data_key+" "+data_unit)
+    plt.scatter(result_interpolated['pos_x'], result_interpolated['pos_y'], c=result_interpolated[data_key], ec='k',
+                cmap="jet", vmin=result_interpolated[data_key].min(), vmax=result_interpolated[data_key].max())
+    plt.xlabel("x [mm]")
+    plt.ylabel("y [mm]")
     plt.title(s + " - sensor coordinates")
 
     return fig
@@ -510,25 +520,26 @@ def plot_thickness_3d(s, result_thickness):
     surf = ax.plot_surface(result_thickness['x_interp'], result_thickness['y_interp'],
                            result_thickness['thickness_interp'], cmap='jet',
                            vmin=result_thickness['thickness'].min(), vmax=result_thickness['thickness'].max())
-    fig.colorbar(surf, ax=ax, label='thickness')
-    ax.set_xlabel('x')
-    ax.set_ylabel('y')
-    ax.set_zlabel('thickness')
+    fig.colorbar(surf, ax=ax, label='thickness [mm]')
+    ax.set_xlabel('x [mm]')
+    ax.set_ylabel('y [mm]')
+    ax.set_zlabel('thickness [mm]')
     plt.title(s + " - sensor coordinates")
 
     return fig
 
 
-def plot_thickness_on_picture(s, thickness, prm, prm_thickness, contour_plot=False):
+def plot_on_picture(s, data, prm, nb_interp, colorbar_label="", contour_plot=False):
     """
-    Function to plot thickness interpolation 2D surface on the photo taken during experiments.
+    Function to plot data interpolation 2D surface on the photo taken during experiments.
 
     :param s: ID of the sample treated
-    :param thickness: thickness extracted from data
+    :param data:
     :param prm: general parameters
-    :param prm_thickness: thickness extraction parameters
+    :param nb_interp:
+    :param colorbar_label: string, label of the color bar. Used if contour_plot=False
     :param contour_plot: (optional) boolean that is True for contour plot, False for regular surface plot
-    :return: fig object, thickness graph on pixel picture
+    :return: fig object, data plotted on pixel picture
     """
     # Load image
     # Find picture file: contains sample name and picture keyword, and ends with appropriate extension
@@ -542,39 +553,38 @@ def plot_thickness_on_picture(s, thickness, prm, prm_thickness, contour_plot=Fal
 
     # Extract map
     map_points = extract_map(os.path.join(prm.data_folder, s + "_map.map"),
-                             prm_thickness.begin_map, prm_thickness.end_map)
+                             prm.begin_map, prm.end_map)
 
     # Sort map by point ID (security check)
     vect_px = np.array((map_points['PixelX'], map_points['PixelY'], map_points['PointID']))
     vect_px_sorted_by_point_id = vect_px[:, vect_px[2, :].argsort()]
 
     # Interpolate data on pixel map
-    xpx, ypx, zpx = interpolate_data(vect_px_sorted_by_point_id[0, :], vect_px_sorted_by_point_id[1, :], thickness,
-                                     prm_thickness.nb_interp)
+    xpx, ypx, zpx = interpolate_data(vect_px_sorted_by_point_id[0, :], vect_px_sorted_by_point_id[1, :], data,
+                                     nb_interp)
 
     # 2D graph with pixel image coordinates
     fig = plt.figure()
     ax = fig.add_subplot(111)
     plt.imshow(img)
     if not contour_plot:
-        pcm = ax.pcolormesh(xpx, ypx, zpx, shading='nearest', cmap="jet", alpha=prm_thickness.alpha, vmin=thickness.min(),
-                      vmax=thickness.max())
-        fig.colorbar(pcm, label='thickness')
+        pcm = ax.pcolormesh(xpx, ypx, zpx, shading='nearest', cmap="jet", alpha=prm.alpha,
+                            vmin=data.min(), vmax=data.max())
+        fig.colorbar(pcm, label=colorbar_label)
         # Scatter plot of measurement points
-        plt.scatter(vect_px_sorted_by_point_id[0, :], vect_px_sorted_by_point_id[1, :], s=2., c="k")#, #c="k", #thickness, #cmap="jet",
-                    #vmin=thickness.min(), vmax=thickness.max())
+        plt.scatter(vect_px_sorted_by_point_id[0, :], vect_px_sorted_by_point_id[1, :], s=2., c="k")
     else:
         # Surface plot with more transparence
-        ax.pcolormesh(xpx, ypx, zpx, shading='nearest', cmap="jet", alpha=prm_thickness.alpha/2, vmin=thickness.min(),
-                      vmax=thickness.max())
+        ax.pcolormesh(xpx, ypx, zpx, shading='nearest', cmap="jet", alpha=prm.alpha/2, vmin=data.min(),
+                      vmax=data.max())
         # Contour plot with inline labels
-        CS = ax.contour(xpx, ypx, zpx, cmap="jet", vmin=thickness.min(), vmax=thickness.max())
-        ax.clabel(CS, inline=True, inline_spacing=-2, fontsize=5)
+        CS = ax.contour(xpx, ypx, zpx, cmap="jet", vmin=data.min(), vmax=data.max())
+        ax.clabel(CS, inline=True, inline_spacing=-2, fontsize=8)
 
-    if prm_thickness.cropping_frame != 0:
-        # Perform cropping if wanted
-        plt.xlim(np.min(xpx)-prm_thickness.cropping_frame, np.max(xpx)+prm_thickness.cropping_frame)
-        plt.ylim(np.min(ypx)-prm_thickness.cropping_frame, np.max(ypx)+prm_thickness.cropping_frame)
+    if prm.cropping_frame != 0:
+        # Perform cropping if wanted, with (0,0) at upper left corner
+        plt.xlim(np.min(xpx)-prm.cropping_frame, np.max(xpx)+prm.cropping_frame)
+        plt.ylim(np.max(ypx)+prm.cropping_frame, np.min(ypx)-prm.cropping_frame)
 
     plt.title(s)
     plt.axis('off')
@@ -595,16 +605,16 @@ def plot_fz_curve_fit(s, i, data_point, result_indentation, fit_range_thickness_
     """
     fig = plt.figure()
 
-    plt.plot(data_point["pos_z"], data_point["Fz"], "--k", linewidth=0.5)
+    plt.plot(data_point['pos_z'], data_point['Fz'], "--k", linewidth=0.5)
 
-    if len(result_indentation['pos_z_fit'][i]) != 0:
+    if len(result_indentation['pos_z_fit_range'][i]) != 0:
         # Plot fitting range and curve, if test has not failed
-        plt.plot(result_indentation['pos_z_fit'][i], result_indentation['Fz_fit'][i], "-k", linewidth=0.5)
-        plt.plot(result_indentation['pos_z_fit'][i], result_indentation['res_fit'][i], '-b')
-        plt.plot([result_indentation['pos_z_fit'][i][0], result_indentation['pos_z_fit'][i][0]],
+        plt.plot(result_indentation['pos_z_fit_range'][i], result_indentation['Fz_fit_range'][i], "-k", linewidth=0.5)
+        plt.plot(result_indentation['pos_z_fit_range'][i], result_indentation['Fz_fitted_curve'][i], '-b')
+        plt.plot([result_indentation['pos_z_fit_range'][i][0], result_indentation['pos_z_fit_range'][i][0]],
                  [np.min(data_point["Fz"]), np.max(data_point["Fz"])],
                  "-k", linewidth=0.5)
-        plt.plot([result_indentation['pos_z_fit'][i][-1], result_indentation['pos_z_fit'][i][-1]],
+        plt.plot([result_indentation['pos_z_fit_range'][i][-1], result_indentation['pos_z_fit_range'][i][-1]],
                  [np.min(data_point["Fz"]), np.max(data_point["Fz"])],
                  "-k", linewidth=0.5)
 
@@ -612,7 +622,8 @@ def plot_fz_curve_fit(s, i, data_point, result_indentation, fit_range_thickness_
     plt.ylabel("Fz [gF]")
     plt.title(s + " - point ID " + str(i+1))
     plt.legend(["original data", "data used for the fit search (" + str(fit_range_thickness_percent) +
-                " % of point thickness)", "curve fit for E=" + str(round(result_indentation['E_fit'][i], 2)) +
+                " % of point thickness)", "curve fit for E=" + str(round(result_indentation['E'][i], 2)) +
                 " kPa (R² = " + str(round(result_indentation['corr_coeff'][i], 2)) + ")"])
 
     return fig
+

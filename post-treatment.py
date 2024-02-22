@@ -41,26 +41,31 @@ class ParametersFiles:
     sample_ID_position = 0      # 0 = sample ID is the 1st element given (appears before the first file_name_separator)
     sample_name_separator = "-"  # string that separates sample name in sample ID
     sample_name_position = 0
-    
+    begin_map = "MAPPING"  # String contained in the line before column name line (entire line will be removed)
+    end_map = "Reference"  # String contained in the line after points data (entire line will be removed)
+    cropping_frame = 150  # Picture cropping (in pixels) around measurement points limits. 0 = no cropping
+    alpha = 0.5  # 0 = transparent, 1 = opaque (used for if plot_thickness_on_image = True)
+
 
 class ParametersThickness:
-    plot_z_curve = True     # Plot position z over time curve for each point for verification purposes
+    plot_z_curve = False     # Plot position z over time curve for each point for verification purposes
     plot_2D = True          # Plot and save in .png
     plot_on_picture = True
     plot_contour = True  # Plot and save in .png
-    cropping_frame = 150  # Picture cropping (in pixels) around measurement points limits. 0 = no cropping
     plot_3D = True          # Plot and save in .png and .pickle for interactivity
-    alpha = 0.5  # 0 = transparent, 1 = opaque (used for if plot_thickness_on_image = True)
     file_keyword = "thickness"   # Keyword in filename for this test
     file_extension = ".txt"        # File extension for this test
     nb_interp = 100     # Number of points for the data interpolation used to draw color maps
     begin_data = "<DATA>"      # String after which the data point begins
     end_data = "<END DATA>"    # String before which the data point ends
-    begin_map = "MAPPING"  # String contained in the line before column name line (entire line will be removed)
-    end_map = "Reference"  # String contained in the line after points data (entire line will be removed)
 
 
-class ParametersIndentation():
+class ParametersIndentation:
+    plot_fz_curve_fit = False
+    plot_2D = True          # Plot and save in .png
+    plot_on_picture = True
+    plot_thickness_comparison = True
+    nb_interp = 100     # Number of points for the data interpolation used to draw color maps
     fit_start_thickness_percent = 1     # Start value for the Fz fit = thickness percentage (at the same point)
     fit_range_thickness_percent = 15    # Range (on thickness percentage) on which Fz fit is performed = linear domain
     # If sensor position values is less than thickness range wanted for fitting, the point is skipped (test failure)
@@ -71,9 +76,11 @@ class ParametersIndentation():
     nu = 0.5        # Poisson coefficient value
     radius = 1   # Sensor radius, in mm
     gravity = 9.80665   # Standard acceleration of gravity, in m/s², used to convert gf/mm² in kPa
-    plot_fz_curve_fit = True
 
 
+####################################################
+# INITIALIZING
+####################################################
 # Pass parameters
 prm = ParametersFiles
 prm_thickness = ParametersThickness
@@ -120,7 +127,7 @@ try:
         # Extract data
         logging.info("Extracting thickness data...")
         data_points_list = extract_data(s, prm.data_folder, prm_thickness.file_keyword, prm_thickness.file_extension,
-                                        prm_thickness.begin_data, prm_thickness.end_data, prm, tol=1e-3)
+                                        prm_thickness.begin_data, prm_thickness.end_data, tol=1e-3)
 
         # Compute thickness and interpolate results
         logging.info("Computing thickness and interpolations")
@@ -138,7 +145,7 @@ try:
                     plt.close(fig)
         if prm_thickness.plot_2D:
             logging.info("Generating thickness 2D plot")
-            fig = plot_thickness_2d(s, result_thickness)
+            fig = plot_interpolated_surface(s, result_thickness, 'thickness', "[mm]")
             fig.savefig(os.path.join(sample_folder, s + "_thickness_2D.png"), bbox_inches='tight')
             if not prm.show_plots:
                 plt.close(fig)
@@ -151,13 +158,14 @@ try:
                 plt.close(fig)
         if prm_thickness.plot_on_picture:
             logging.info("Generating thickness plot on picture")
-            fig = plot_thickness_on_picture(s, result_thickness['thickness'], prm, prm_thickness)
+            fig = plot_on_picture(s, result_thickness['thickness'], prm, prm_thickness.nb_interp,
+                                  colorbar_label="thickness [mm]")
             fig.savefig(os.path.join(sample_folder, s + "_thickness_on_image.png"), bbox_inches='tight')
             if not prm.show_plots:
                 plt.close(fig)
         if prm_thickness.plot_contour:
             logging.info("Generating thickness contour plot on picture")
-            fig = plot_thickness_on_picture(s, result_thickness['thickness'], prm, prm_thickness, contour_plot=True)
+            fig = plot_on_picture(s, result_thickness['thickness'], prm, prm_thickness.nb_interp, contour_plot=True)
             fig.savefig(os.path.join(sample_folder, s + "_thickness_on_image_contour.png"), bbox_inches='tight')
             if not prm.show_plots:
                 plt.close(fig)
@@ -171,12 +179,17 @@ try:
         # Extract data
         logging.info("Extracting indentation data...")
         data_points_list = extract_data(s, prm.data_folder, prm_indentation.file_keyword, prm_indentation.file_extension,
-                                        prm_indentation.begin_data, prm_indentation.end_data, prm, tol=1e-3)
+                                        prm_indentation.begin_data, prm_indentation.end_data, tol=1e-3)
 
         # Compute Young modulus from indentation curve fitting
         logging.info("Computing Young modulus with force data fitting...")
         result_indentation = calculate_young_modulus(data_points_list, result_thickness['thickness'], prm_indentation,
                                                      prm)
+
+        # Compute thickness and interpolate results
+        logging.info("Computing interpolations")
+        result_indentation['x_interp'], result_indentation['y_interp'], result_indentation['E_interp'] = interpolate_data(
+            result_indentation['pos_x'], result_indentation['pos_y'], result_indentation['E'], prm_indentation.nb_interp)
 
         # Plot graphs
         if prm_indentation.plot_fz_curve_fit:
@@ -187,6 +200,25 @@ try:
                 fig.savefig(os.path.join(raw_extraction_folder, s + "_fz_curve_fit_ID" + str(i+1) + ".png"), bbox_inches='tight')
                 if not prm.show_plots:
                     plt.close(fig)
+        if prm_indentation.plot_2D:
+            logging.info("Generating Young modulus 2D plot")
+            fig = plot_interpolated_surface(s, result_indentation, 'E', "[kPa]")
+            fig.savefig(os.path.join(sample_folder, s + "_young_modulus_2D.png"), bbox_inches='tight')
+            if not prm.show_plots:
+                plt.close(fig)
+        if prm_indentation.plot_on_picture:
+            logging.info("Generating Young modulus plot on picture")
+            fig = plot_on_picture(s, result_indentation['E'], prm, prm_indentation.nb_interp,
+                                  colorbar_label="E [kPa]")
+            fig.savefig(os.path.join(sample_folder, s + "_young_modulus_on_image.png"), bbox_inches='tight')
+            if not prm.show_plots:
+                plt.close(fig)
+        # if prm_indentation.plot_thickness_comparison: ##TODO voir si pertinent
+        #     logging.info("Generating Young modulus plot on picture")
+        #     fig = plot_on_picture(s, result_indentation['E'], prm, prm_indentation.nb_interp,
+        #                           colorbar_label="E [kPa]")
+        #     fig = plot_on_picture(s, result_thickness['thickness'], prm, prm_thickness.nb_interp, contour_plot=True, fig=fig)
+        #     fig.savefig(os.path.join(sample_folder, s + "_young_modulus_vs_thickness_on_image.png"), bbox_inches='tight')
 
         ####################################################
         # Excel output
