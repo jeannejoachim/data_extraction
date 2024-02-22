@@ -10,25 +10,7 @@ from scipy.interpolate import griddata
 from scipy.optimize import curve_fit
 from functools import partial
 from sklearn.metrics import r2_score
-
-
-def log_text(log_file_path, verbose, text):
-    """
-    Function to print text in console and add it to a log file.
-
-    :param log_file_path: path of the log file
-    :param verbose: boolean parameter, when True text is printed to terminal, when False text is only written in logfile
-    :param text: string of the message to print and write
-    :return: nothing
-    """
-
-    if verbose:
-        print(text)
-
-    with open(log_file_path, "a") as lf:
-        lf.write(text + "\n")
-
-    return
+import logging
 
 
 def extract_data(s, data_folder, file_keyword, file_extension, begin_data, end_data, prm, tol=1e-3):
@@ -60,8 +42,7 @@ def extract_data(s, data_folder, file_keyword, file_extension, begin_data, end_d
                                          if sample_initial_thickness_file not in f]
 
     if len(sample_correction_thickness_files) != 0:
-        log_text(prm.log_file_path, prm.verbose,
-                 "\tmultiple test files found for this sample: launching data correction procedure")
+        logging.info("... Multiple test files found for this sample: launching data correction procedure")
         data_points_list = correct_data_points(data_points_list, data_folder,
                                                sample_initial_thickness_file, sample_correction_thickness_files,
                                                begin_data, end_data, prm, tol=tol)
@@ -147,7 +128,7 @@ def correct_data_points(data_points_list, data_folder, sample_initial_test_file,
     xy_sensor_data = extract_xy_sensor(data_points_list, os.path.join(data_folder, sample_initial_test_file),
                                        prm)
     for i in range(len(sample_correction_files)):
-        log_text(prm.log_file_path, prm.verbose, "\t- correction with data from: " + sample_correction_files[i])
+        logging.info("... Correction with data from: " + sample_correction_files[i])
 
         # Extract all data point from secondary test files
         data_file_path = os.path.join(data_folder, sample_correction_files[i])
@@ -164,23 +145,21 @@ def correct_data_points(data_points_list, data_folder, sample_initial_test_file,
             if len(pt_index[0]) == 1:
                 pt_index = pt_index[0][0]  # extract value from tuple result
             elif len(pt_index[0]) == 0:
-                log_text(prm.log_file_path, prm.verbose, "There is no coordinates in the initial data file (" +
-                         sample_initial_test_file + ") matching the point (x, y = " + str(xy_sensor_corr[j]) +
-                         ") extracted from the correction data file (" + sample_correction_files[i] + ").\n" +
-                         "Verify data or try to increase correction tolerance (tol = " + str(tol) + ").")
-                raise ValueError("There is no coordinates in the initial data file matching the current correction"
-                                 "point.\nCheck log file for more details.")
+                logging.critical("There is no coordinates in the initial data file (" + sample_initial_test_file +
+                                 ") matching the point (x, y = " + str(xy_sensor_corr[j]) +
+                                 ") extracted from the correction data file (" + sample_correction_files[i] + ").")
+                logging.critical("Verify data or try to increase correction tolerance (tol = " + str(tol) + ").")
+                raise ValueError
             else:
-                log_text(prm.log_file_path, prm.verbose, "There are multiple coordinates in the initial data file (" +
-                         sample_initial_test_file + ") matching the point (x, y = " + str(xy_sensor_corr[j]) +
-                         ") extracted from the correction data file (" + sample_correction_files[i] + ").\n" +
-                         "Verify data or try to increase correction tolerance (tol = " + str(tol) + ").")
-                raise ValueError("There are multiple coordinates in the initial data file matching the current "
-                                 "correction point.\nCheck log file for more details.")
+                logging.critical("There are multiple coordinates in the initial data file (" + sample_initial_test_file
+                                 + ") matching the point (x, y = " + str(xy_sensor_corr[j]) +
+                                 ") extracted from the correction data file (" + sample_correction_files[i] + ").")
+                logging.critical("Verify data or try to increase correction tolerance (tol = " + str(tol) + ").")
+                raise ValueError
 
             # Replace initial data with corrected data
             data_points_list[pt_index] = data_points_list_correction[j]
-            log_text(prm.log_file_path, prm.verbose, "\t\t- point " + str(pt_index) + " replaced")
+            logging.info("... point " + str(pt_index) + " replaced")
 
     return data_points_list
 
@@ -339,9 +318,8 @@ def extract_xy_sensor(data_points_list, data_file_path, prm, data_keys=['pos_x',
                 xy_sensor[i, c] = data_points_list[i][k][0]
             else:
                 # Take average if position recorded for the test changes during test
-                log_text(prm.log_file_path, prm.verbose, "\t\tWARNING " + position +
-                         " position is not equal for all time for point: " + str(i) +
-                         "in data:" + data_file_path + "\n" + " Taking average value rounded at 1e-6.")
+                logging.warning("Position " + position + " is not equal for all time for point: " + str(i) +
+                                "in data:" + data_file_path + ". Taking average value rounded at 1e-6.")
                 xy_sensor[i, c] = np.round(np.average(data_points_list[i][k]), 6)
 
     return xy_sensor
@@ -376,8 +354,8 @@ def skip_indentation_point(i, result_indentation, prm):
     result_indentation['pos_z_fit'].append([])
     result_indentation['Fz_fit'].append([])
     result_indentation['res_fit'].append(np.nan)
-    log_text(prm.log_file_path, prm.verbose, "WARNING Indentation test failed for data point:" + str(i + 1) + "\n" +
-             "Skipping this point in Young modulus extraction")
+    logging.warning("Indentation test failed for data point:" + str(i + 1) +
+                    ". Skipping this point in Young modulus extraction")
 
     return result_indentation
 
@@ -557,8 +535,7 @@ def plot_thickness_on_picture(s, thickness, prm, prm_thickness, contour_plot=Fal
     image_file = [f for f in os.listdir(prm.data_folder) if s in f and prm.picture_keyword in f and
                   f.endswith(prm.picture_extension)]
     if len(image_file) > 1:
-        log_text(prm.log_file_path, prm.verbose, "WARNING There is more than one image file with the same ID (" + s +
-                 ")\n" + "Taking image: " + image_file[0])
+        logging.warning("There is more than one image file with the same ID (" + s + "), Using image: " + image_file[0])
     image_file = image_file[0]
 
     img = np.asarray(Image.open(os.path.join(prm.data_folder, image_file)))
