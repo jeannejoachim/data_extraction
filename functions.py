@@ -144,21 +144,23 @@ def correct_data_points(data_points_list, data_folder, sample_initial_test_file,
             if len(pt_index[0]) == 1:
                 pt_index = pt_index[0][0]  # extract value from tuple result
             elif len(pt_index[0]) == 0:
-                logging.critical("There is no coordinates in the initial data file (" + sample_initial_test_file +
+                data_points_list.append([])
+                pt_index = len(data_points_list)-1
+                logging.warning("There is no coordinates in the initial data file (" + sample_initial_test_file +
                                  ") matching the point (x, y = " + str(xy_sensor_corr[j]) +
                                  ") extracted from the correction data file (" + sample_correction_files[i] + ").")
-                logging.critical("Verify data or try to increase correction tolerance (tol = " + str(tol) + ").")
-                raise ValueError
+                logging.warning("Adding a point at ID = " + str(pt_index+1) + ").")
+                logging.warning("If no point should be added, increase correction tolerance (tol = " + str(tol) + ").")
             else:
                 logging.critical("There are multiple coordinates in the initial data file (" + sample_initial_test_file
                                  + ") matching the point (x, y = " + str(xy_sensor_corr[j]) +
                                  ") extracted from the correction data file (" + sample_correction_files[i] + ").")
-                logging.critical("Verify data or try to increase correction tolerance (tol = " + str(tol) + ").")
+                logging.critical("Verify data or try to decrease correction tolerance (tol = " + str(tol) + ").")
                 raise ValueError
 
             # Replace initial data with corrected data
             data_points_list[pt_index] = data_points_list_correction[j]
-            logging.info("... point " + str(pt_index) + " replaced")
+            logging.info("... point " + str(pt_index+1) + " replaced")
 
     return data_points_list
 
@@ -173,15 +175,35 @@ def calculate_thickness(data_points_list):
     # Initialize output dictionary
     result_thickness = {'thickness': np.zeros(len(data_points_list)),
                         'pos_x': np.zeros(len(data_points_list)),
-                        'pos_y': np.zeros(len(data_points_list))}
+                        'pos_y': np.zeros(len(data_points_list)),
+                        'ID': np.zeros(len(data_points_list))}
 
     # Fill output dictionary
     for i in range(len(data_points_list)):
         result_thickness['thickness'][i] = -np.max(data_points_list[i]["pos_z"])
         result_thickness['pos_x'][i] = np.mean(data_points_list[i]["pos_x"])
         result_thickness['pos_y'][i] = np.mean(data_points_list[i]["pos_y"])
+        result_thickness['ID'][i] = i+1
 
     return result_thickness
+
+
+def remove_nan_values(x, y, data):
+    """
+    Remove points skipped in extraction process = Nan (for "not a number") values in case test has failed on a point
+
+    :param x: x position
+    :param y: y position
+    :param data: value (thickness or Young modulus) which can contain Nan values
+    :return:
+    """
+    ind_to_remove = np.where(np.isnan(data))[0]
+    if len(ind_to_remove) != 0:
+        x = np.delete(x, ind_to_remove)
+        y = np.delete(y, ind_to_remove)
+        data = np.delete(data, ind_to_remove)
+
+    return x, y, data
 
 
 def interpolate_data(x, y, z, nb_interp):
@@ -317,8 +339,8 @@ def extract_xy_sensor(data_points_list, data_file_path, data_keys=['pos_x', 'pos
                 xy_sensor[i, c] = data_points_list[i][k][0]
             else:
                 # Take average if position recorded for the test changes during test
-                logging.warning("Position " + position + " is not equal for all time for point: " + str(i) +
-                                "in data:" + data_file_path + ". Taking average value rounded at 1e-6.")
+                logging.warning("Position " + k + " is not equal for all time for point: " + str(i) +
+                                " in data:" + data_file_path + ". Taking average value rounded at 1e-6.")
                 xy_sensor[i, c] = np.round(np.average(data_points_list[i][k]), 6)
 
     return xy_sensor
@@ -348,13 +370,12 @@ def skip_indentation_point(i, result_indentation):
     :return: result_indentation: updated dictionary
     """
     result_indentation['E'][i] = np.nan
-    result_indentation['Fz_0_fit'][i] = np.nan
+    result_indentation['Fz_0'][i] = np.nan
     result_indentation['corr_coeff'][i] = np.nan
     result_indentation['pos_z_fit_range'].append([])
     result_indentation['Fz_fit_range'].append([])
     result_indentation['Fz_fitted_curve'].append(np.nan)
-    logging.warning("Indentation test failed for data point:" + str(i + 1) +
-                    ". Skipping this point in Young modulus extraction")
+    logging.warning("Indentation test failed for data point:" + str(i + 1) + ".")
 
     return result_indentation
 
@@ -387,6 +408,7 @@ def calculate_young_modulus(data_points_list, thickness, prm_indentation, prm):
     # consider on the Fz curve is not the same from one point to the other)
     result_indentation = {'pos_x': np.zeros(len(data_points_list)),
                           'pos_y': np.zeros(len(data_points_list)),
+                          'ID': np.zeros(len(data_points_list)),
                           'E': np.zeros(len(data_points_list)),
                           'Fz_0': np.zeros(len(data_points_list)),
                           'corr_coeff': np.zeros(len(data_points_list)),
@@ -398,6 +420,7 @@ def calculate_young_modulus(data_points_list, thickness, prm_indentation, prm):
         # Get x and y coordinates for the current point
         result_indentation['pos_x'][i] = np.mean(data_points_list[i]["pos_x"])
         result_indentation['pos_y'][i] = np.mean(data_points_list[i]["pos_y"])
+        result_indentation['ID'][i] = i+1
 
         # Define data
         pos_z = data_points_list[i]["pos_z"]
@@ -427,6 +450,11 @@ def calculate_young_modulus(data_points_list, thickness, prm_indentation, prm):
 
         if pos_z_fit_range[-1] < pos_z_max:
             # Skip this point: test stopped before reaching pos_z_max, so test failed
+            logging.warning("Indentation test range not met: range is " +
+                            str(round((pos_z_fit_range[-1]-pos_z_fit_range[0])/thickness[i]*100, 1)) +
+                            "% of thickness value, whereas wanted fit_range_thickness_percent = " +
+                            str(prm_indentation.fit_range_thickness_percent) +
+                            "%. Skipping this point in Young modulus extraction")
             result_indentation = skip_indentation_point(i, result_indentation)
             continue
 
@@ -474,28 +502,28 @@ def plot_thickness_z_curve(s, i, data_point, thickness_value):
     return fig
 
 
-def plot_interpolated_surface(s, result_interpolated, data_key, data_unit):
+def plot_interpolated_surface(s, result_dict, data_key, data_unit, nb_interp):
     """
     Function to plot thickness interpolation surface on a 2D graph.
 
     :param s: string of the sample ID
-    :param result_interpolated: dictionary containing results extracted from test, namely:
+    :param result_dict: dictionary containing results extracted from test, namely:
         * pos_x: x position extracted from data
         * pos_y: y position extracted from data
-        * thickness: thickness extracted from data
-        * x_interp: x position interpolated
-        * y_interp: y position interpolated
-        * z_interp: z position (thickness) interpolated
-    :return: fig object, 2D graph for thickness at sensor coordinates
+        * data: data extracted
+    :return: fig object, 2D graph for data at sensor coordinates
     """
+    # Prepare data
+    x_clean, y_clean, data_clean = remove_nan_values(result_dict['pos_x'], result_dict['pos_y'], result_dict[data_key])
+    x_interp, y_interp, data_interp = interpolate_data(x_clean, y_clean, data_clean, nb_interp)
+
+    # Create graph
     fig = plt.figure()
     ax = fig.add_subplot(111)
-    pcm = ax.pcolormesh(result_interpolated['x_interp'], result_interpolated['y_interp'],
-                        result_interpolated[data_key + '_interp'], shading='nearest', cmap="jet",
-                        vmin=result_interpolated[data_key].min(), vmax=result_interpolated[data_key].max())
+    pcm = ax.pcolormesh(x_interp, y_interp, data_interp, shading='nearest', cmap="jet",
+                        vmin=np.min(data_clean), vmax=np.max(data_clean))
     fig.colorbar(pcm, label=data_key+" "+data_unit)
-    plt.scatter(result_interpolated['pos_x'], result_interpolated['pos_y'], c=result_interpolated[data_key], ec='k',
-                cmap="jet", vmin=result_interpolated[data_key].min(), vmax=result_interpolated[data_key].max())
+    plt.scatter(x_clean, y_clean, c=data_clean, ec='k', cmap="jet", vmin=np.min(data_clean), vmax=np.max(data_clean))
     plt.xlabel("x [mm]")
     plt.ylabel("y [mm]")
     plt.title(s + " - sensor coordinates")
@@ -503,7 +531,7 @@ def plot_interpolated_surface(s, result_interpolated, data_key, data_unit):
     return fig
 
 
-def plot_thickness_3d(s, result_thickness):
+def plot_thickness_3d(s, result_thickness, nb_interp):
     """
     Function to plot thickness interpolation surface on a 3D graph.
 
@@ -515,11 +543,17 @@ def plot_thickness_3d(s, result_thickness):
         * z_interp: z position (thickness) interpolated
     :return: fig object, 3D graph for thickness at sensor coordinates
     """
+    # Prepare data
+    x_clean, y_clean, thickness_clean = remove_nan_values(result_thickness['pos_x'], result_thickness['pos_y'],
+                                                     result_thickness['thickness'])
+    x_interp, y_interp, thickness_interp = interpolate_data(x_clean, y_clean, thickness_clean, nb_interp)
+
+    # Create graph
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
-    surf = ax.plot_surface(result_thickness['x_interp'], result_thickness['y_interp'],
-                           result_thickness['thickness_interp'], cmap='jet',
-                           vmin=result_thickness['thickness'].min(), vmax=result_thickness['thickness'].max())
+
+    surf = ax.plot_surface(x_interp, y_interp, thickness_interp, cmap='jet', vmin=np.min(thickness_clean),
+                           vmax=np.max(thickness_clean))
     fig.colorbar(surf, ax=ax, label='thickness [mm]')
     ax.set_xlabel('x [mm]')
     ax.set_ylabel('y [mm]')
@@ -559,9 +593,12 @@ def plot_on_picture(s, data, prm, nb_interp, colorbar_label="", contour_plot=Fal
     vect_px = np.array((map_points['PixelX'], map_points['PixelY'], map_points['PointID']))
     vect_px_sorted_by_point_id = vect_px[:, vect_px[2, :].argsort()]
 
+    # Remove failed test points (Nan values)
+    x_clean, y_clean, data_clean = remove_nan_values(vect_px_sorted_by_point_id[0, :], vect_px_sorted_by_point_id[1, :],
+                                                     data)
+
     # Interpolate data on pixel map
-    xpx, ypx, zpx = interpolate_data(vect_px_sorted_by_point_id[0, :], vect_px_sorted_by_point_id[1, :], data,
-                                     nb_interp)
+    xpx, ypx, zpx = interpolate_data(x_clean, y_clean, data_clean, nb_interp)
 
     # 2D graph with pixel image coordinates
     fig = plt.figure()
@@ -569,16 +606,16 @@ def plot_on_picture(s, data, prm, nb_interp, colorbar_label="", contour_plot=Fal
     plt.imshow(img)
     if not contour_plot:
         pcm = ax.pcolormesh(xpx, ypx, zpx, shading='nearest', cmap="jet", alpha=prm.alpha,
-                            vmin=data.min(), vmax=data.max())
+                            vmin=np.min(data_clean), vmax=np.max(data_clean))
         fig.colorbar(pcm, label=colorbar_label)
         # Scatter plot of measurement points
         plt.scatter(vect_px_sorted_by_point_id[0, :], vect_px_sorted_by_point_id[1, :], s=2., c="k")
     else:
         # Surface plot with more transparence
-        ax.pcolormesh(xpx, ypx, zpx, shading='nearest', cmap="jet", alpha=prm.alpha/2, vmin=data.min(),
-                      vmax=data.max())
+        ax.pcolormesh(xpx, ypx, zpx, shading='nearest', cmap="jet", alpha=prm.alpha/2, vmin=np.min(data_clean),
+                      vmax=np.max(data_clean))
         # Contour plot with inline labels
-        CS = ax.contour(xpx, ypx, zpx, cmap="jet", vmin=data.min(), vmax=data.max())
+        CS = ax.contour(xpx, ypx, zpx, cmap="jet", vmin=np.min(data_clean), vmax=np.max(data_clean))
         ax.clabel(CS, inline=True, inline_spacing=-2, fontsize=8)
 
     if prm.cropping_frame != 0:

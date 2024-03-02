@@ -16,19 +16,20 @@ import matplotlib.pyplot as plt
 import pickle
 from datetime import datetime
 import logging
+import pandas as pd
+import openpyxl
 # Function import
 from functions import *
 
 
 class ParametersFiles:
     # Data folder path, the 'r' prefix is important to convert the path in raw string!
-    data_folder = r"C:\Users\Jeanne\Documents\Documents_communs\Laura_donnees\Donnees\BMC-007\test"
-    verbose = True          # if True, messages appear in terminal
+    data_folder = r"C:\Users\Jeanne\Documents\Documents_communs\Laura_donnees\Donnees\Raw_data"
     show_plots = False
-    treat_all_files_in_data_folder = True
+    treat_all_files_in_data_folder = False
     # if False, treatment is performed on given "sample_ID" list (below)
     # if True, "sample_ID" is not used and sample ID is retrieved from all files in data_folder
-    sample_ID = []
+    sample_ID = ["H1-JAB9744"]
     picture_keyword = ""     # Keyword in filename for test picture
     picture_extension = (".bmp")  # Tuple of strings for possible extension of the test pictures
     # Test result name formatting. Example/ Test result name: E1-JAB9735_indentation
@@ -48,7 +49,7 @@ class ParametersFiles:
 
 
 class ParametersThickness:
-    plot_z_curve = False     # Plot position z over time curve for each point for verification purposes
+    plot_z_curve = True     # Plot position z over time curve for each point for verification purposes
     plot_2D = True          # Plot and save in .png
     plot_on_picture = True
     plot_contour = True  # Plot and save in .png
@@ -61,13 +62,13 @@ class ParametersThickness:
 
 
 class ParametersIndentation:
-    plot_fz_curve_fit = False
+    plot_fz_curve_fit = True
     plot_2D = True          # Plot and save in .png
     plot_on_picture = True
-    plot_thickness_comparison = True
+    #plot_thickness_comparison = True
     nb_interp = 100     # Number of points for the data interpolation used to draw color maps
     fit_start_thickness_percent = 1     # Start value for the Fz fit = thickness percentage (at the same point)
-    fit_range_thickness_percent = 15    # Range (on thickness percentage) on which Fz fit is performed = linear domain
+    fit_range_thickness_percent = 12.5    # Range (on thickness percentage) on which Fz fit is performed = linear domain
     # If sensor position values is less than thickness range wanted for fitting, the point is skipped (test failure)
     file_keyword = "indentation"   # Keyword in filename for this test
     file_extension = ".txt"        # File format for this test
@@ -102,8 +103,10 @@ try:
     if prm.treat_all_files_in_data_folder:
         all_thickness_files = [f for f in os.listdir(prm.data_folder) if prm_thickness.file_keyword in f
                                if f.endswith(prm_thickness.file_extension)]
-        sample_ID = list(set([f.split(prm.test_name_separator)[prm.sample_ID_position] for f in all_thickness_files]))
+        sample_ID = sorted(list(set([f.split(prm.test_name_separator)[prm.sample_ID_position] for f in
+                                     all_thickness_files])))
         # set() conversion removes duplicate
+        # sorted() sorts the sample names alphabetically, for better Excel sheets management
     else:
         sample_ID = prm.sample_ID
 
@@ -126,32 +129,55 @@ try:
 
         # Extract data
         logging.info("Extracting thickness data...")
-        data_points_list = extract_data(s, prm.data_folder, prm_thickness.file_keyword, prm_thickness.file_extension,
-                                        prm_thickness.begin_data, prm_thickness.end_data, tol=1e-3)
+        data_points_list_thickness = extract_data(s, prm.data_folder, prm_thickness.file_keyword,
+                                                  prm_thickness.file_extension, prm_thickness.begin_data,
+                                                  prm_thickness.end_data, tol=1e-2)
 
         # Compute thickness and interpolate results
         logging.info("Computing thickness and interpolations")
-        result_thickness = calculate_thickness(data_points_list)
-        result_thickness['x_interp'], result_thickness['y_interp'], result_thickness['thickness_interp'] = interpolate_data(
-            result_thickness['pos_x'], result_thickness['pos_y'], result_thickness['thickness'], prm_thickness.nb_interp)
+        result_thickness = calculate_thickness(data_points_list_thickness)
 
-        # Plot graphs
+        ####################################################
+        # INDENTATION
+        ####################################################
+        logging.info("--------")
+        logging.info("2. Indentation data post-treatment:")
+
+        # Extract data
+        logging.info("Extracting indentation data...")
+        data_points_list_indentation = extract_data(s, prm.data_folder, prm_indentation.file_keyword,
+                                                    prm_indentation.file_extension, prm_indentation.begin_data,
+                                                    prm_indentation.end_data, tol=1e-2)
+
+        # Compute Young modulus from indentation curve fitting
+        logging.info("Computing Young modulus with force data fitting...")
+        result_indentation = calculate_young_modulus(data_points_list_indentation, result_thickness['thickness'],
+                                                     prm_indentation, prm)
+
+        # If indentation tests has failed, remove corresponding thickness result
+        ind_to_remove = np.where(np.isnan(result_indentation['E']))[0]
+        result_thickness['thickness'][ind_to_remove] = np.nan
+
+        ####################################################
+        # GRAPHS
+        ####################################################
+        # Plot graphs thickness
         if prm_thickness.plot_z_curve:
-            logging.info("Generating z position plots for " + str(len(data_points_list)) + " points")
-            for i in range(len(data_points_list)):
-                fig = plot_thickness_z_curve(s, i, data_points_list[i], result_thickness['thickness'][i])
+            logging.info("Generating z position plots for " + str(len(data_points_list_thickness)) + " points...")
+            for i in range(len(data_points_list_thickness)):
+                fig = plot_thickness_z_curve(s, i, data_points_list_thickness[i], result_thickness['thickness'][i])
                 fig.savefig(os.path.join(raw_extraction_folder, s + "_thickness_z_curve_ID" + str(i+1) + ".png"), bbox_inches='tight')
                 if not prm.show_plots:
                     plt.close(fig)
         if prm_thickness.plot_2D:
             logging.info("Generating thickness 2D plot")
-            fig = plot_interpolated_surface(s, result_thickness, 'thickness', "[mm]")
+            fig = plot_interpolated_surface(s, result_thickness, 'thickness', "[mm]", prm_thickness.nb_interp)
             fig.savefig(os.path.join(sample_folder, s + "_thickness_2D.png"), bbox_inches='tight')
             if not prm.show_plots:
                 plt.close(fig)
         if prm_thickness.plot_3D:
             logging.info("Generating thickness 3D plot")
-            fig = plot_thickness_3d(s, result_thickness)
+            fig = plot_thickness_3d(s, result_thickness, prm_thickness.nb_interp)
             fig.savefig(os.path.join(sample_folder, s + "_thickness_3D.png"), bbox_inches='tight')
             pickle.dump(fig, open(os.path.join(sample_folder, s + "_thickness_3D.fig.pickle"), 'wb'))
             if not prm.show_plots:
@@ -170,39 +196,18 @@ try:
             if not prm.show_plots:
                 plt.close(fig)
 
-        ####################################################
-        # INDENTATION
-        ####################################################
-        logging.info("--------")
-        logging.info("2. Indentation data post-treatment:")
-
-        # Extract data
-        logging.info("Extracting indentation data...")
-        data_points_list = extract_data(s, prm.data_folder, prm_indentation.file_keyword, prm_indentation.file_extension,
-                                        prm_indentation.begin_data, prm_indentation.end_data, tol=1e-3)
-
-        # Compute Young modulus from indentation curve fitting
-        logging.info("Computing Young modulus with force data fitting...")
-        result_indentation = calculate_young_modulus(data_points_list, result_thickness['thickness'], prm_indentation,
-                                                     prm)
-
-        # Compute thickness and interpolate results
-        logging.info("Computing interpolations")
-        result_indentation['x_interp'], result_indentation['y_interp'], result_indentation['E_interp'] = interpolate_data(
-            result_indentation['pos_x'], result_indentation['pos_y'], result_indentation['E'], prm_indentation.nb_interp)
-
-        # Plot graphs
+        # Plot graphs indentation
         if prm_indentation.plot_fz_curve_fit:
-            logging.info("Generating Fz curve fit for " + str(len(data_points_list)) + " points...")
-            for i in range(len(data_points_list)):
-                fig = plot_fz_curve_fit(s, i, data_points_list[i], result_indentation,
+            logging.info("Generating Fz curve fit for " + str(len(data_points_list_indentation)) + " points...")
+            for i in range(len(data_points_list_indentation)):
+                fig = plot_fz_curve_fit(s, i, data_points_list_indentation[i], result_indentation,
                                         prm_indentation.fit_range_thickness_percent)
                 fig.savefig(os.path.join(raw_extraction_folder, s + "_fz_curve_fit_ID" + str(i+1) + ".png"), bbox_inches='tight')
                 if not prm.show_plots:
                     plt.close(fig)
         if prm_indentation.plot_2D:
             logging.info("Generating Young modulus 2D plot")
-            fig = plot_interpolated_surface(s, result_indentation, 'E', "[kPa]")
+            fig = plot_interpolated_surface(s, result_indentation, 'E', "[kPa]", prm_indentation.nb_interp)
             fig.savefig(os.path.join(sample_folder, s + "_young_modulus_2D.png"), bbox_inches='tight')
             if not prm.show_plots:
                 plt.close(fig)
@@ -221,9 +226,32 @@ try:
         #     fig.savefig(os.path.join(sample_folder, s + "_young_modulus_vs_thickness_on_image.png"), bbox_inches='tight')
 
         ####################################################
-        # Excel output
+        # Excel outputs
         ####################################################
-        # TODO
+        logging.info("Writing results in Excel file")
+        df = pd.DataFrame()
+        df["X [mm]"] = result_thickness['pos_x']
+        df["Y [mm]"] = result_thickness['pos_y']
+        df["Position ID"] = result_thickness['ID']
+        df["Type"] = ''
+        df["Thickness [mm]"] = result_thickness['thickness']
+        df["IM [kPa]"] = result_indentation['E']
+        df["R^2"] = result_indentation['corr_coeff']
+        # Check if Excel file already exists
+        excel_path = os.path.join(prm.data_folder, '0_Results.xlsx')
+        try:
+            # if file exists: load it and only erase sheet with same sample name
+            book = openpyxl.load_workbook(excel_path)
+            logging.info("Excel file loaded")
+            writer = pd.ExcelWriter(excel_path, engine='openpyxl', mode='a', if_sheet_exists='replace')
+            df.to_excel(writer, sheet_name=s, index=False)
+            writer.close()
+        except FileNotFoundError:
+            # if file does not exist: create it
+            df.to_excel(excel_path, sheet_name=s, index=False)
+            logging.info("Excel file created")
+
+        ###################################################
         logging.info("Sample treated")
         logging.info("---------------------------------")
 
