@@ -13,11 +13,13 @@ import sys
 import re
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.colors import ListedColormap
 import pickle
 from datetime import datetime
 import logging
 import pandas as pd
 import openpyxl
+import xlsxwriter   # used for Excel conditional formatting
 # Function import
 from functions import *
 
@@ -49,7 +51,7 @@ class ParametersFiles:
 
 
 class ParametersThickness:
-    plot_z_curve = True     # Plot position z over time curve for each point for verification purposes
+    plot_z_curve = False     # Plot position z over time curve for each point for verification purposes
     plot_2D = True          # Plot and save in .png
     plot_on_picture = True
     plot_contour = True  # Plot and save in .png
@@ -62,7 +64,7 @@ class ParametersThickness:
 
 
 class ParametersIndentation:
-    plot_fz_curve_fit = True
+    plot_fz_curve_fit = False
     plot_2D = True          # Plot and save in .png
     plot_on_picture = True
     #plot_thickness_comparison = True
@@ -229,6 +231,7 @@ try:
         # Excel outputs
         ####################################################
         logging.info("Writing results in Excel file")
+        # Store data
         df = pd.DataFrame()
         df["X [mm]"] = result_thickness['pos_x']
         df["Y [mm]"] = result_thickness['pos_y']
@@ -237,19 +240,41 @@ try:
         df["Thickness [mm]"] = result_thickness['thickness']
         df["IM [kPa]"] = result_indentation['E']
         df["R^2"] = result_indentation['corr_coeff']
-        # Check if Excel file already exists
+
+        # Format
+        pd.set_option('display.max_colwidth', None)
+        cmap = ListedColormap(["steelblue", "lightsteelblue", "white", "lightpink", "lightcoral"])
+        df_styled = df.style.background_gradient(axis=None, subset='Thickness [mm]', cmap=cmap)\
+            .background_gradient(axis=None, subset='IM [kPa]', cmap=cmap)\
+            .apply(highlight_bad_correlation, threshold=0.85, column='R^2', axis=1)
+
+        # Save Sample data in sheet
         excel_path = os.path.join(prm.data_folder, '0_Results.xlsx')
-        try:
-            # if file exists: load it and only erase sheet with same sample name
-            book = openpyxl.load_workbook(excel_path)
-            logging.info("Excel file loaded")
+        try: ##TODO améliorer : définir un booléen qui check si le fichier existe
+            # if file exists: add or rewrite sample sheet
             writer = pd.ExcelWriter(excel_path, engine='openpyxl', mode='a', if_sheet_exists='replace')
-            df.to_excel(writer, sheet_name=s, index=False)
+            df_styled.to_excel(writer, sheet_name=s, index=False, na_rep='', freeze_panes=(1, 0))
             writer.close()
+            logging.info("Excel file appended:" + excel_path)
         except FileNotFoundError:
             # if file does not exist: create it
-            df.to_excel(excel_path, sheet_name=s, index=False)
+            df_styled.to_excel(excel_path, sheet_name=s, index=False, na_rep='', freeze_panes=(1, 0))
             logging.info("Excel file created")
+
+        # Change column width for "Position ID" and "Thickness [mm]"
+        wb = openpyxl.load_workbook(excel_path)
+        ws = wb[s]
+        for col in [3, 5]:
+            ws.column_dimensions[openpyxl.utils.get_column_letter(col)].width = 15
+
+        # Add borders
+        thin = openpyxl.styles.borders.Side(border_style="thin", color="000000")
+        for row in ws['A1:G'+str(len(df["X [mm]"])+1)]:
+            for cell in row:
+                cell.border = openpyxl.styles.borders.Border(top=thin, left=thin, right=thin, bottom=thin)
+
+        # Save file
+        wb.save(excel_path)
 
         ###################################################
         logging.info("Sample treated")

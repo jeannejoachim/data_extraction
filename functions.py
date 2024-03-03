@@ -11,6 +11,7 @@ from scipy.optimize import curve_fit
 from functools import partial
 from sklearn.metrics import r2_score
 import logging
+import pandas as pd
 
 
 def extract_data(s, data_folder, file_keyword, file_extension, begin_data, end_data, tol=1e-3):
@@ -664,3 +665,11 @@ def plot_fz_curve_fit(s, i, data_point, result_indentation, fit_range_thickness_
 
     return fig
 
+
+def highlight_bad_correlation(s, threshold, column):
+    """Styling function to highlight bad correlation coefficients."""
+    is_min = pd.Series(data=False, index=s.index)
+    is_min[column] = s.loc[column] <= threshold
+    # color = 'red' if s < 0.8 else 'black'
+    # return f'color: {color}'
+    return ['color: red' if is_min.any() else '' for v in is_min]
