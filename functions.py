@@ -146,17 +146,20 @@ def correct_data_points(data_points_list, data_folder, sample_initial_test_file,
                 pt_index = pt_index[0][0]  # extract value from tuple result
             elif len(pt_index[0]) == 0:
                 data_points_list.append([])
+                xy_sensor_data = np.append(xy_sensor_data, [xy_sensor_corr[j, :]], axis=0)
                 pt_index = len(data_points_list)-1
                 logging.warning("There is no coordinates in the initial data file (" + sample_initial_test_file +
                                  ") matching the point (x, y = " + str(xy_sensor_corr[j]) +
                                  ") extracted from the correction data file (" + sample_correction_files[i] + ").")
                 logging.warning("Adding a point at ID = " + str(pt_index+1) + ").")
-                logging.warning("If no point should be added, increase correction tolerance (tol = " + str(tol) + ").")
+                logging.warning("If no point should be added, increase correction tolerance (current value: tol = " +
+                                str(tol) + ").")
             else:
                 logging.critical("There are multiple coordinates in the initial data file (" + sample_initial_test_file
                                  + ") matching the point (x, y = " + str(xy_sensor_corr[j]) +
                                  ") extracted from the correction data file (" + sample_correction_files[i] + ").")
-                logging.critical("Verify data or try to decrease correction tolerance (tol = " + str(tol) + ").")
+                logging.critical("Verify data or try to decrease correction tolerance (current value: tol = " +
+                                 str(tol) + ").")
                 raise ValueError
 
             # Replace initial data with corrected data
@@ -196,7 +199,7 @@ def remove_nan_values(x, y, data):
     :param x: x position
     :param y: y position
     :param data: value (thickness or Young modulus) which can contain Nan values
-    :return:
+    :return: cleaned arrays
     """
     ind_to_remove = np.where(np.isnan(data))[0]
     if len(ind_to_remove) != 0:
@@ -485,12 +488,13 @@ def calculate_young_modulus(data_points_list, thickness, prm_indentation, prm):
 
 def plot_thickness_z_curve(s, i, data_point, thickness_value):
     """
+    Function to plot thickness curves, used for verification.
 
-    :param s:
-    :param i:
-    :param data_point:
-    :param thickness_value:
-    :return:
+    :param s: string, sample name
+    :param i: integer, point ID
+    :param data_point: indentation data results for the given point
+    :param thickness_value: thickness value for the given point
+    :return: fig object, 2D graph for data at sensor coordinates
     """
     fig = plt.figure()
     plt.plot([data_point['time'][0], data_point['time'][-1]], [thickness_value, thickness_value], '--b')
@@ -498,7 +502,7 @@ def plot_thickness_z_curve(s, i, data_point, thickness_value):
     plt.ylabel("-(pos_z) [mm]")
     plt.xlabel("time [s]")
     plt.legend(["thickness value [mm] = " + str(round(thickness_value, 3))])
-    plt.title(s + " - point ID " + str(i))
+    plt.title(s + " - point ID " + str(i+1))
 
     return fig
 
@@ -576,14 +580,18 @@ def plot_on_picture(s, data, prm, nb_interp, colorbar_label="", contour_plot=Fal
     :param contour_plot: (optional) boolean that is True for contour plot, False for regular surface plot
     :return: fig object, data plotted on pixel picture
     """
-    # Load image
     # Find picture file: contains sample name and picture keyword, and ends with appropriate extension
     image_file = [f for f in os.listdir(prm.data_folder) if s in f and prm.picture_keyword in f and
                   f.endswith(prm.picture_extension)]
-    if len(image_file) > 1:
+    if len(image_file) == 0:
+        logging.critical("Image missing for this sample (" + s + "). Check that the image name in the folder: " +
+                         os.listdir(prm.data_folder))
+        raise FileNotFoundError
+    elif len(image_file) > 1:
         logging.warning("There is more than one image file with the same ID (" + s + "), Using image: " + image_file[0])
     image_file = image_file[0]
 
+    # Load image
     img = np.asarray(Image.open(os.path.join(prm.data_folder, image_file)))
 
     # Extract map
@@ -606,8 +614,8 @@ def plot_on_picture(s, data, prm, nb_interp, colorbar_label="", contour_plot=Fal
     ax = fig.add_subplot(111)
     plt.imshow(img)
     if not contour_plot:
-        pcm = ax.pcolormesh(xpx, ypx, zpx, shading='nearest', cmap="jet", alpha=prm.alpha,
-                            vmin=np.min(data_clean), vmax=np.max(data_clean))
+        pcm = ax.pcolormesh(xpx, ypx, zpx, shading='nearest', cmap="jet", alpha=prm.alpha, vmin=np.min(data_clean),
+                            vmax=np.max(data_clean))
         fig.colorbar(pcm, label=colorbar_label)
         # Scatter plot of measurement points
         plt.scatter(vect_px_sorted_by_point_id[0, :], vect_px_sorted_by_point_id[1, :], s=2., c="k")
@@ -630,13 +638,79 @@ def plot_on_picture(s, data, prm, nb_interp, colorbar_label="", contour_plot=Fal
     return fig
 
 
+def plot_comparison_on_picture(s, data_surface, data_contour, prm, nb_interp, colorbar_label=""):
+    """
+    Function to plot data interpolation 2D surface on the photo taken during experiments.
+
+    :param s: ID of the sample treated
+    :param data:
+    :param prm: general parameters
+    :param nb_interp:
+    :param colorbar_label: string, label of the color bar. Used if contour_plot=False
+    :param contour_plot: (optional) boolean that is True for contour plot, False for regular surface plot
+    :return: fig object, data plotted on pixel picture
+    """
+    # Find picture file: contains sample name and picture keyword, and ends with appropriate extension
+    image_file = [f for f in os.listdir(prm.data_folder) if s in f and prm.picture_keyword in f and
+                  f.endswith(prm.picture_extension)]
+    if len(image_file) == 0:
+        logging.critical("Image missing for this sample (" + s + "). Check that the image name in the folder: " +
+                         os.listdir(prm.data_folder))
+        raise FileNotFoundError
+    elif len(image_file) > 1:
+        logging.warning("There is more than one image file with the same ID (" + s + "), Using image: " + image_file[0])
+    image_file = image_file[0]
+
+    # Load image
+    img = np.asarray(Image.open(os.path.join(prm.data_folder, image_file)))
+
+    # Extract map
+    map_points = extract_map(os.path.join(prm.data_folder, s + "_map.map"),
+                             prm.begin_map, prm.end_map)
+
+    # Sort map by point ID (security check)
+    vect_px = np.array((map_points['PixelX'], map_points['PixelY'], map_points['PointID']))
+    vect_px_sorted_by_point_id = vect_px[:, vect_px[2, :].argsort()]
+
+
+    # 2D graph with pixel image coordinates
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    plt.imshow(img)
+
+    # Plot data_surface with surface plot
+    x_clean, y_clean, data_surface_clean = remove_nan_values(vect_px_sorted_by_point_id[0, :],
+                                                             vect_px_sorted_by_point_id[1, :], data_surface)
+    xpx, ypx, zpx = interpolate_data(x_clean, y_clean, data_surface_clean, nb_interp)
+    pcm = ax.pcolormesh(xpx, ypx, zpx, shading='nearest', cmap="jet", alpha=prm.alpha, vmin=np.min(data_surface_clean),
+                        vmax=np.max(data_surface_clean))
+    fig.colorbar(pcm, label=colorbar_label)
+
+    # Plot data_contour with contour plot
+    x_clean, y_clean, data_contour_clean = remove_nan_values(vect_px_sorted_by_point_id[0, :],
+                                                             vect_px_sorted_by_point_id[1, :], data_contour)
+    xpx, ypx, zpx = interpolate_data(x_clean, y_clean, data_contour_clean, nb_interp)
+    CS = ax.contour(xpx, ypx, zpx, cmap="jet", vmin=np.min(data_contour_clean), vmax=np.max(data_contour_clean))
+    ax.clabel(CS, inline=True, inline_spacing=-2, fontsize=8)
+
+    if prm.cropping_frame != 0:
+        # Perform cropping if wanted, with (0,0) at upper left corner
+        plt.xlim(np.min(xpx)-prm.cropping_frame, np.max(xpx)+prm.cropping_frame)
+        plt.ylim(np.max(ypx)+prm.cropping_frame, np.min(ypx)-prm.cropping_frame)
+
+    plt.title(s)
+    plt.axis('off')
+
+    return fig
+
+
 def plot_fz_curve_fit(s, i, data_point, result_indentation, fit_range_thickness_percent):
     """
     Function to plot Fz evolution with z position of the sensor and the curve fit used to extract the Young modulus.
 
     :param s: string, sample name
     :param i: integer, point ID
-    :param data_point: indentation data results for the given point
+    :param data_point: indentation data results for the current point
     :param result_indentation: dictionary containing fit results for all measurement points
     :param fit_range_thickness_percent: thickness range used for the fit, used in the legend
     :return: fig object, Fz graph for the given point

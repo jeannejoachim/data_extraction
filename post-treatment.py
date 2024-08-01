@@ -1,10 +1,7 @@
 #-----------------------------------------------------------------------------
 # Post-treatment script
-# Test failures: number after test name giving priority (data from thickness (contain all points) erased by those in
-# thickness2 (contain previously failed points only))
-# File name example :
-# Give results organization in subfolders
-# Dernière MAJ : 12-09-2023
+# See README for more information
+# Updated : 01-08-2024
 #-----------------------------------------------------------------------------
 
 # Module imports
@@ -23,15 +20,20 @@ import xlsxwriter   # used for Excel conditional formatting
 # Function import
 from functions import *
 
-
+####################################################
+# USER DEFINED PARAMETERS
+####################################################
+# TODO define parameters in an external text file after testing on multiple OS
 class ParametersFiles:
-    # Data folder path, the 'r' prefix is important to convert the path in raw string!
+    # Data folder path, containing data files. The 'r' prefix is important to convert the path in raw string!
     data_folder = r"C:\Users\Jeanne\Documents\Documents_communs\Laura_donnees\Donnees\Raw_data"
     show_plots = False
-    treat_all_files_in_data_folder = False
+    # (recommended) if False, plots are only saved in files.
+    # if True, plots are shown in the IDE (useful when treating only one sample, or for debugging).
+    treat_all_files_in_data_folder = True
     # if False, treatment is performed on given "sample_ID" list (below)
     # if True, "sample_ID" is not used and sample ID is retrieved from all files in data_folder
-    sample_ID = ["H1-JAB9744"]
+    sample_ID = ["T1-JAB9780"]
     picture_keyword = ""     # Keyword in filename for test picture
     picture_extension = (".bmp")  # Tuple of strings for possible extension of the test pictures
     # Test result name formatting. Example/ Test result name: E1-JAB9735_indentation
@@ -51,9 +53,9 @@ class ParametersFiles:
 
 
 class ParametersThickness:
-    plot_z_curve = False     # Plot position z over time curve for each point for verification purposes
+    plot_z_curve = True     # Plot position z over time curve for each point for verification purposes
     plot_2D = True          # Plot and save in .png
-    plot_on_picture = True
+    plot_on_picture = True  # Plot thickness map on sample real picture
     plot_contour = True  # Plot and save in .png
     plot_3D = True          # Plot and save in .png and .pickle for interactivity
     file_keyword = "thickness"   # Keyword in filename for this test
@@ -64,10 +66,10 @@ class ParametersThickness:
 
 
 class ParametersIndentation:
-    plot_fz_curve_fit = False
+    plot_fz_curve_fit = True
     plot_2D = True          # Plot and save in .png
-    plot_on_picture = True
-    #plot_thickness_comparison = True
+    plot_on_picture = True  # Plot indentation map on sample real picture
+    plot_thickness_comparison = True    # Plot indentation vs thickness comparison  map on sample real picture
     nb_interp = 100     # Number of points for the data interpolation used to draw color maps
     fit_start_thickness_percent = 1     # Start value for the Fz fit = thickness percentage (at the same point)
     fit_range_thickness_percent = 12.5    # Range (on thickness percentage) on which Fz fit is performed = linear domain
@@ -136,7 +138,7 @@ try:
                                                   prm_thickness.end_data, tol=1e-2)
 
         # Compute thickness and interpolate results
-        logging.info("Computing thickness and interpolations")
+        logging.info("Calculating thickness")
         result_thickness = calculate_thickness(data_points_list_thickness)
 
         ####################################################
@@ -152,7 +154,8 @@ try:
                                                     prm_indentation.end_data, tol=1e-2)
 
         # Compute Young modulus from indentation curve fitting
-        logging.info("Computing Young modulus with force data fitting...")
+        logging.info("Calculating Young modulus with force data fitting...")
+
         result_indentation = calculate_young_modulus(data_points_list_indentation, result_thickness['thickness'],
                                                      prm_indentation, prm)
 
@@ -220,12 +223,11 @@ try:
             fig.savefig(os.path.join(sample_folder, s + "_young_modulus_on_image.png"), bbox_inches='tight')
             if not prm.show_plots:
                 plt.close(fig)
-        # if prm_indentation.plot_thickness_comparison: ##TODO voir si pertinent
-        #     logging.info("Generating Young modulus plot on picture")
-        #     fig = plot_on_picture(s, result_indentation['E'], prm, prm_indentation.nb_interp,
-        #                           colorbar_label="E [kPa]")
-        #     fig = plot_on_picture(s, result_thickness['thickness'], prm, prm_thickness.nb_interp, contour_plot=True, fig=fig)
-        #     fig.savefig(os.path.join(sample_folder, s + "_young_modulus_vs_thickness_on_image.png"), bbox_inches='tight')
+        if prm_indentation.plot_thickness_comparison:
+            logging.info("Generating comparison plot on picture")
+            fig = plot_comparison_on_picture(s, result_indentation['E'], result_thickness['thickness'], prm,
+                                             prm_indentation.nb_interp, colorbar_label="E [kPa]")
+            fig.savefig(os.path.join(sample_folder, s + "_young_modulus_vs_thickness_on_image.png"), bbox_inches='tight')
 
         ####################################################
         # Excel outputs
@@ -241,8 +243,7 @@ try:
         df["IM [kPa]"] = result_indentation['E']
         df["R^2"] = result_indentation['corr_coeff']
 
-        # Format
-        pd.set_option('display.max_colwidth', None)
+        # Apply conditional formatting
         cmap = ListedColormap(["steelblue", "lightsteelblue", "white", "lightpink", "lightcoral"])
         df_styled = df.style.background_gradient(axis=None, subset='Thickness [mm]', cmap=cmap)\
             .background_gradient(axis=None, subset='IM [kPa]', cmap=cmap)\
@@ -250,13 +251,14 @@ try:
 
         # Save Sample data in sheet
         excel_path = os.path.join(prm.data_folder, '0_Results.xlsx')
-        try: ##TODO améliorer : définir un booléen qui check si le fichier existe
+        excel_exists = os.path.exists(excel_path)
+        if excel_exists:
             # if file exists: add or rewrite sample sheet
             writer = pd.ExcelWriter(excel_path, engine='openpyxl', mode='a', if_sheet_exists='replace')
             df_styled.to_excel(writer, sheet_name=s, index=False, na_rep='', freeze_panes=(1, 0))
             writer.close()
             logging.info("Excel file appended:" + excel_path)
-        except FileNotFoundError:
+        else:
             # if file does not exist: create it
             df_styled.to_excel(excel_path, sheet_name=s, index=False, na_rep='', freeze_panes=(1, 0))
             logging.info("Excel file created")
@@ -269,7 +271,7 @@ try:
 
         # Add borders
         thin = openpyxl.styles.borders.Side(border_style="thin", color="000000")
-        for row in ws['A1:G'+str(len(df["X [mm]"])+1)]:
+        for row in ws.iter_rows(min_row=2, max_col=np.shape(df)[1], max_row=np.shape(df)[0]+1):
             for cell in row:
                 cell.border = openpyxl.styles.borders.Border(top=thin, left=thin, right=thin, bottom=thin)
 
